@@ -436,7 +436,11 @@ class MainWindow(QMainWindow):
     def _rebuild_tm(self) -> None:
         if self.conn is None:
             return
-        result = rebuild_tm(self.conn)
+        try:
+            result = rebuild_tm(self.conn)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "TM rebuild failed", str(exc))
+            return
         QMessageBox.information(self, "TM", f"Pairs: {result['pairs']}\nRows: {result['rows']}")
 
     def _load_glossary(self) -> None:

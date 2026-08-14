@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import difflib
 import sqlite3
-from collections import defaultdict
 
 try:
     from rapidfuzz import fuzz
@@ -11,17 +10,34 @@ except ImportError:  # pragma: no cover
 
 
 def rebuild_tm(conn: sqlite3.Connection) -> dict[str, int]:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tm (
+            cn TEXT NOT NULL,
+            target TEXT NOT NULL,
+            hits INTEGER NOT NULL,
+            PRIMARY KEY (cn, target)
+        )
+        """
+    )
     conn.execute("DELETE FROM tm")
-    rows = conn.execute(
-        "SELECT cn, target_official FROM strings WHERE cn != '' AND target_official != ''"
-    ).fetchall()
-    counts: dict[tuple[str, str], int] = defaultdict(int)
-    for row in rows:
-        counts[(row["cn"], row["target_official"])] += 1
-    payload = [(cn, target, hits) for (cn, target), hits in counts.items()]
-    conn.executemany("INSERT INTO tm(cn, target, hits) VALUES(?, ?, ?)", payload)
+    conn.execute(
+        """
+        INSERT INTO tm(cn, target, hits)
+        SELECT cn, target_official, COUNT(*)
+        FROM strings
+        WHERE length(cn) > 0 AND length(target_official) > 0
+        GROUP BY cn, target_official
+        """
+    )
     conn.commit()
-    return {"pairs": len(payload), "rows": len(rows)}
+    pairs = int(conn.execute("SELECT COUNT(*) FROM tm").fetchone()[0])
+    rows = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM strings WHERE length(cn) > 0 AND length(target_official) > 0"
+        ).fetchone()[0]
+    )
+    return {"pairs": pairs, "rows": rows}
 
 
 def exact_candidates(conn: sqlite3.Connection, cn_text: str, limit: int = 20) -> list[sqlite3.Row]:
