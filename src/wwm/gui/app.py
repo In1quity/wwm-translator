@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 from ..base import build_versioned_base
 from ..build import build_translation_release
 from ..db import open_db, rebuild_cache
-from ..glossary import export_glossary_from_db, load_glossary_to_db
+from ..glossary import load_glossary_to_db
 from ..overlay import cn_hash, load_overlay, load_translation_rows, save_translation_rows
 from ..project import (
     LANG_CODES,
@@ -151,7 +151,7 @@ class MainWindow(QMainWindow):
             if not self._restore_last_project():
                 self.base_warning.setVisible(True)
                 self.base_warning.setText(
-                    "No project opened. Click 'Open project' to choose game folder "
+                    "No project opened. Click 'Create DB' to choose game folder "
                     "and target language."
                 )
 
@@ -233,7 +233,7 @@ class MainWindow(QMainWindow):
 
         row_buttons = QHBoxLayout()
         btn_save = QPushButton("Save translation")
-        btn_save.clicked.connect(self._save_row)
+        btn_save.clicked.connect(self._save_translations)
         btn_apply = QPushButton("Apply to same CN")
         btn_apply.clicked.connect(self._apply_same_cn)
         row_buttons.addWidget(btn_save)
@@ -295,15 +295,13 @@ class MainWindow(QMainWindow):
         self.issues_only.stateChanged.connect(self._apply_filters)
         bar.addWidget(self.issues_only)
 
-        btn_open_project = QPushButton("Open project")
+        btn_open_project = QPushButton("Create DB")
         btn_open_project.clicked.connect(self._open_project_dialog)
         btn_load_master = QPushButton("Load master translation")
         btn_load_master.clicked.connect(self._load_master_overlay)
         btn_load_glossary = QPushButton("Load glossary")
         btn_load_glossary.clicked.connect(self._load_glossary)
-        btn_save_glossary = QPushButton("Save glossary")
-        btn_save_glossary.clicked.connect(self._save_glossary)
-        btn_export = QPushButton("Export files")
+        btn_export = QPushButton("Export translation")
         btn_export.clicked.connect(self._export_release)
         btn_qa = QPushButton("Run QA")
         btn_qa.clicked.connect(self._run_qa)
@@ -313,7 +311,6 @@ class MainWindow(QMainWindow):
             btn_open_project,
             btn_load_master,
             btn_load_glossary,
-            btn_save_glossary,
             btn_export,
             btn_qa,
             btn_tm,
@@ -333,6 +330,22 @@ class MainWindow(QMainWindow):
             )
         )
 
+    def _persist_current_row(self) -> bool:
+        if not self.current_id or self.repo is None:
+            return False
+        row = self.repo.get_row(self.current_id)
+        if row is None:
+            return False
+        self.mine_rows[self.current_id] = {
+            "cn_hash": cn_hash(row["cn"]),
+            "state": "ours",
+            "target": self.target.toPlainText(),
+            "cn": row["cn"],
+            "en": row["en"],
+        }
+        self._sync_repo_overlays(reload_model=False)
+        return True
+
     def _on_row(self) -> None:
         if self.model is None or self.repo is None:
             return
@@ -340,6 +353,8 @@ class MainWindow(QMainWindow):
         row_id = self.model.row_id(idx.row())
         if not row_id:
             return
+        if self.current_id and self.current_id != row_id:
+            self._persist_current_row()
         self.current_id = row_id
         row = self.repo.get_row(row_id)
         if row is None:
@@ -367,21 +382,12 @@ class MainWindow(QMainWindow):
         for item in fill_preview_panel(self.conn, row_id):
             self.preview_list.addItem(item)
 
-    def _save_row(self) -> None:
-        if not self.current_id or self.repo is None or self.project is None:
+    def _save_translations(self) -> None:
+        if self.project is None:
             return
-        row = self.repo.get_row(self.current_id)
-        if row is None:
-            return
-        self.mine_rows[self.current_id] = {
-            "cn_hash": cn_hash(row["cn"]),
-            "state": "ours",
-            "target": self.target.toPlainText(),
-            "cn": row["cn"],
-            "en": row["en"],
-        }
-        save_translation_rows(self.project.my_translation_path, self.mine_rows)
-        self._sync_repo_overlays(reload_model=True)
+        self._persist_current_row()
+        result = save_translation_rows(self.project.my_translation_path, self.mine_rows)
+        QMessageBox.information(self, "Translation", f"Saved rows: {result['rows']}")
 
     def _apply_same_cn(self) -> None:
         if not self.current_id or self.repo is None or self.conn is None or self.project is None:
@@ -405,13 +411,12 @@ class MainWindow(QMainWindow):
                 "en": item["en"] or "",
             }
             updated += 1
-        save_translation_rows(self.project.my_translation_path, self.mine_rows)
         self._sync_repo_overlays(reload_model=True)
         QMessageBox.information(self, "Propagate", f"Updated rows: {updated}")
 
     def _load_master_overlay(self) -> None:
         if self.project is None:
-            QMessageBox.warning(self, "Project", "Open a project first.")
+            QMessageBox.warning(self, "Project", "Create DB first.")
             return
         path, _ = QFileDialog.getOpenFileName(
             self, "Open master translation TSV", str(self.project.project_dir), "*.tsv"
@@ -455,19 +460,6 @@ class MainWindow(QMainWindow):
         if self.current_id:
             self._on_row()
         QMessageBox.information(self, "Glossary", f"Loaded rows: {result['rows']}")
-
-    def _save_glossary(self) -> None:
-        if self.project is None:
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save glossary TSV", str(self.project.project_dir / "glossary.tsv"), "*.tsv"
-        )
-        if not path:
-            return
-        result = export_glossary_from_db(self.project.db_path, Path(path))
-        if self.current_id:
-            self._on_row()
-        QMessageBox.information(self, "Glossary", f"Saved rows: {result['rows']}")
 
     def _sync_repo_overlays(self, reload_model: bool) -> None:
         if self.repo is None:
@@ -621,22 +613,25 @@ class MainWindow(QMainWindow):
     def _export_release(self) -> None:
         if self.project is None:
             return
-        output_dir = QFileDialog.getExistingDirectory(self, "Choose export directory")
-        if not output_dir:
-            return
+        output_dir = Path(sys.executable).resolve().parent / "export"
         try:
             result = build_translation_release(
                 self.project,
-                Path(output_dir),
+                output_dir,
                 self._effective_overlay(),
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Export failed", str(exc))
             return
+        message = (
+            f"Built files: {len(result['built_files'])}\n"
+            f"Archive: {result['zip']}\n"
+            f"Output: {output_dir}"
+        )
         QMessageBox.information(
             self,
             "Export finished",
-            f"Built files: {len(result['built_files'])}\nArchive: {result['zip']}",
+            message,
         )
 
     def _disable_editor(self) -> None:
