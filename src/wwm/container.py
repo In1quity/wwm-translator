@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pyzstd
 
-MAGIC = b"\xEF\xBE\xAD\xDE"
+MAGIC = b"\xef\xbe\xad\xde"
 
 
 def unpack_container(input_file: Path, output_dir: Path) -> list[Path]:
@@ -87,4 +87,3 @@ def _decompress_block(block: bytes) -> bytes:
 def _extract_number(path: Path) -> int:
     match = re.search(r"_(\d+)\.dat$", path.name)
     return int(match.group(1)) if match else 10**9
-

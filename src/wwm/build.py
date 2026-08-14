@@ -24,7 +24,13 @@ def build_translation_release(
     targets = [
         project.game_root / "Package" / "HD" / "oversea" / "locale" / file_base,
         project.game_root / "Package" / "HD" / "oversea" / "locale" / f"{file_base}_diff",
-        project.game_root / "LocalData" / "Patch" / "HD" / "oversea" / "locale" / f"{file_base}_diff",
+        project.game_root
+        / "LocalData"
+        / "Patch"
+        / "HD"
+        / "oversea"
+        / "locale"
+        / f"{file_base}_diff",
     ]
 
     built_files: list[str] = []
@@ -131,4 +137,3 @@ def _to_release_relative(project: ProjectPaths, input_file: Path) -> Path:
         idx = parts.index("LocalData")
         return Path(*parts[idx:])
     return Path(input_file.name)
-

@@ -156,7 +156,9 @@ def rebuild_cache(
         )
     conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('base_version', ?)", (version,))
     conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('target_lang', ?)", (target_lang,))
-    conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('game_root', ?)", (str(game_root),))
+    conn.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES('game_root', ?)", (str(game_root),)
+    )
     conn.execute(
         "INSERT INTO strings_fts(rowid, id, cn, en, target_official) "
         "SELECT rowid, id, cn, en, target_official FROM strings"
@@ -177,6 +179,3 @@ def _read_tsv(path: Path) -> dict[str, str]:
             if len(row) >= 2:
                 rows[row[0].strip().lower()] = row[1]
     return rows
-
-
-

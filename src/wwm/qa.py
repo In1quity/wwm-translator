@@ -47,7 +47,9 @@ def run_qa(db_path, overlay: dict[str, dict[str, str]], target_lang: str) -> dic
         if item and item.get("cn_hash", "") == cn_hash(row["cn"] or ""):
             target = item.get("target", "")
         payload.extend(check_row(row["id"], row["cn"], row["en"], target, glossary, target_lang))
-    conn.executemany("INSERT INTO qa_issues(id, rule, severity, detail) VALUES(?, ?, ?, ?)", payload)
+    conn.executemany(
+        "INSERT INTO qa_issues(id, rule, severity, detail) VALUES(?, ?, ?, ?)", payload
+    )
     _add_cn_conflicts(conn, overlay)
     conn.commit()
     total = int(conn.execute("SELECT COUNT(*) FROM qa_issues").fetchone()[0])
@@ -55,17 +57,25 @@ def run_qa(db_path, overlay: dict[str, dict[str, str]], target_lang: str) -> dic
     return {"rows": len(rows), "issues": total}
 
 
-def _check_placeholders(payload: list[tuple[str, str, str, str]], row_id: str, cn: str, target: str) -> None:
-    if sorted(set(PLACEHOLDER_RE.findall(cn or ""))) != sorted(set(PLACEHOLDER_RE.findall(target or ""))):
+def _check_placeholders(
+    payload: list[tuple[str, str, str, str]], row_id: str, cn: str, target: str
+) -> None:
+    if sorted(set(PLACEHOLDER_RE.findall(cn or ""))) != sorted(
+        set(PLACEHOLDER_RE.findall(target or ""))
+    ):
         payload.append((row_id, "placeholder_mismatch", "error", ERROR_CODE_UNBALANCED_BRACES))
 
 
-def _check_tags(payload: list[tuple[str, str, str, str]], row_id: str, cn: str, target: str) -> None:
+def _check_tags(
+    payload: list[tuple[str, str, str, str]], row_id: str, cn: str, target: str
+) -> None:
     if len(LINK_TAG_RE.findall(cn or "")) != len(LINK_TAG_RE.findall(target or "")):
         payload.append((row_id, "link_tag_count_mismatch", "error", ERROR_CODE_LINK_TAG_INVALID))
 
 
-def _check_lang(payload: list[tuple[str, str, str, str]], row_id: str, en: str, target: str, target_lang: str) -> None:
+def _check_lang(
+    payload: list[tuple[str, str, str, str]], row_id: str, en: str, target: str, target_lang: str
+) -> None:
     if target and en and target == en:
         payload.append((row_id, "target_equals_en", "warning", "target equals en"))
     if target_lang not in ("zh_cn", "zh_tw") and CJK_RE.search(target or ""):
@@ -95,7 +105,7 @@ def _field(item: Any, key: str, index: int) -> str:
         return str(item.get(key, "") or "")
     if hasattr(item, "keys") and key in item.keys():
         return str(item[key] or "")
-    if isinstance(item, (tuple, list)) and len(item) > index:
+    if isinstance(item, tuple | list) and len(item) > index:
         return str(item[index] or "")
     return ""
 
@@ -117,7 +127,16 @@ def _add_cn_conflicts(conn, overlay: dict[str, dict[str, str]]) -> None:
     if multi:
         for row in rows:
             if row["cn"] in multi:
-                payload.append((row["id"], "cn_multiple_target_variants", "warning", "same CN has multiple target variants"))
+                payload.append(
+                    (
+                        row["id"],
+                        "cn_multiple_target_variants",
+                        "warning",
+                        "same CN has multiple target variants",
+                    )
+                )
     if payload:
-        conn.executemany("INSERT OR IGNORE INTO qa_issues(id, rule, severity, detail) VALUES(?, ?, ?, ?)", payload)
-
+        conn.executemany(
+            "INSERT OR IGNORE INTO qa_issues(id, rule, severity, detail) VALUES(?, ?, ?, ?)",
+            payload,
+        )

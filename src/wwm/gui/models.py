@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sqlite3
 from collections import OrderedDict
@@ -10,6 +10,7 @@ from PyQt6.QtGui import QColor
 from ..overlay import cn_hash
 
 HEADERS = ["state", "category", "id", "cn", "en", "target", "target_official"]
+_EMPTY_MODEL_INDEX = QModelIndex()
 STATE_COLORS = {
     "new": QColor("#2d4f8b"),
     "changed": QColor("#2d6b3c"),
@@ -125,7 +126,9 @@ class StringsRepository:
         ).fetchone()
         if row is None:
             return None
-        state, target_ours, target_master = self.resolve_overlay(row["id"], row["cn"], row["target_official"])
+        state, target_ours, target_master = self.resolve_overlay(
+            row["id"], row["cn"], row["target_official"]
+        )
         return {
             "id": row["id"],
             "cn": row["cn"],
@@ -137,13 +140,15 @@ class StringsRepository:
             "category": row["category"],
         }
 
-    def resolve_overlay(self, row_id: str, cn_text: str, target_official: str) -> tuple[str, str, str]:
+    def resolve_overlay(
+        self, row_id: str, cn_text: str, target_official: str
+    ) -> tuple[str, str, str]:
         key = (row_id or "").lower()
         current_hash = cn_hash(cn_text or "")
         master_item = self.master_overlay.get(key)
         mine_item = self.mine_overlay.get(key)
 
-        target_master = (master_item.get("target", "") if master_item else "")
+        target_master = master_item.get("target", "") if master_item else ""
 
         if mine_item:
             target_mine = mine_item.get("target", "")
@@ -171,12 +176,12 @@ class StringsRepository:
 
     def qa_for(self, row_id: str) -> list[sqlite3.Row]:
         return self.conn.execute(
-            "SELECT rule, severity, detail FROM qa_issues WHERE id = ? ORDER BY severity DESC, rule",
+            "SELECT rule, severity, detail FROM qa_issues WHERE id = ? "
+            "ORDER BY severity DESC, rule",
             (row_id,),
         ).fetchall()
 
     def _iter_filtered_rows(self, q: QueryState):
-        needle = (q.search or "").casefold()
         where, params = _where_without_state(q)
         where = _append_visibility_clause(where)
         if self._use_materialized_ids(q):
@@ -223,7 +228,14 @@ class StringsRepository:
             offset += step
 
     def _query_key(self, q: QueryState) -> tuple[str, str, bool, str, str, bool]:
-        return (q.state, q.category, q.issues_only, (q.search or "").casefold(), q.sort_by, q.sort_desc)
+        return (
+            q.state,
+            q.category,
+            q.issues_only,
+            (q.search or "").casefold(),
+            q.sort_by,
+            q.sort_desc,
+        )
 
     def _get_search_ids(self, q: QueryState) -> list[str]:
         key = self._query_key(q)
@@ -274,15 +286,16 @@ class StringsRepository:
                     rows = self.conn.execute(query, (*params, step, offset)).fetchall()
                     if not rows:
                         break
-                    for row in rows:
-                        yield row
+                    yield from rows
                     offset += step
 
             source_rows = _stream_rows()
 
         matched_items: list[dict[str, str]] = []
         for row in source_rows:
-            state, target_ours, _target_master = self.resolve_overlay(row["id"], row["cn"], row["target_official"])
+            state, target_ours, _target_master = self.resolve_overlay(
+                row["id"], row["cn"], row["target_official"]
+            )
             item = {
                 "state": state,
                 "category": row["category"],
@@ -367,8 +380,7 @@ class StringsRepository:
                 "SELECT id, cn, en, target_official, category "
                 f"FROM strings WHERE id IN ({placeholders}) ORDER BY id"
             )
-            for row in self.conn.execute(sql, chunk):
-                yield row
+            yield from self.conn.execute(sql, chunk)
 
     def _can_use_sql_page_fetch(self, q: QueryState) -> bool:
         if q.search:
@@ -410,7 +422,9 @@ class StringsRepository:
             )
         return out
 
-    def fetch_sql_page_after_id(self, q: QueryState, limit: int, last_id: str) -> list[dict[str, str]]:
+    def fetch_sql_page_after_id(
+        self, q: QueryState, limit: int, last_id: str
+    ) -> list[dict[str, str]]:
         where, params = _where_without_state(q)
         where = _append_visibility_clause(where)
         clause = "WHERE s.id > ?" if not where else f"{where} AND s.id > ?"
@@ -440,7 +454,9 @@ class StringsRepository:
         return out
 
     def _has_issue(self, row_id: str) -> bool:
-        row = self.conn.execute("SELECT 1 FROM qa_issues WHERE id = ? LIMIT 1", (row_id,)).fetchone()
+        row = self.conn.execute(
+            "SELECT 1 FROM qa_issues WHERE id = ? LIMIT 1", (row_id,)
+        ).fetchone()
         return row is not None
 
     def _ensure_overlay_temp_table(self) -> None:
@@ -479,11 +495,11 @@ class StringsTableModel(QAbstractTableModel):
         self.cache: OrderedDict[int, list[dict[str, str]]] = OrderedDict()
         self.reload()
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def rowCount(self, parent: QModelIndex = _EMPTY_MODEL_INDEX) -> int:  # noqa: N802
         _ = parent
         return self.total
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def columnCount(self, parent: QModelIndex = _EMPTY_MODEL_INDEX) -> int:  # noqa: N802
         _ = parent
         return len(HEADERS)
 

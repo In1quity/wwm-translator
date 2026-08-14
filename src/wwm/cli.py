@@ -24,27 +24,40 @@ def main() -> int:
 
     p_project = sub.add_parser("project", help="Create or open translator project")
     p_project.add_argument("--game-root", required=True, help="Game root folder")
-    p_project.add_argument("--lang", required=True, choices=sorted(LANG_CODES.keys()), help="Target language code")
+    p_project.add_argument(
+        "--lang", required=True, choices=sorted(LANG_CODES.keys()), help="Target language code"
+    )
 
     p_extract = sub.add_parser("extract", help="Extract CN/EN/target into project DB")
     p_extract.add_argument("--game-root", required=True, help="Game root folder")
-    p_extract.add_argument("--lang", required=True, choices=sorted(LANG_CODES.keys()), help="Target language code")
+    p_extract.add_argument(
+        "--lang", required=True, choices=sorted(LANG_CODES.keys()), help="Target language code"
+    )
     p_extract.add_argument("--force", action="store_true", help="Force rebuild extracted base")
 
     p_qa = sub.add_parser("qa", help="Run QA for project")
     p_qa.add_argument("--game-root", required=True, help="Game root folder")
-    p_qa.add_argument("--lang", required=True, choices=sorted(LANG_CODES.keys()), help="Target language code")
+    p_qa.add_argument(
+        "--lang", required=True, choices=sorted(LANG_CODES.keys()), help="Target language code"
+    )
     p_qa.add_argument("--master", default="", help="Optional master translation TSV")
 
     p_export = sub.add_parser("export", help="Export translated locale files")
     p_export.add_argument("--game-root", required=True, help="Game root folder")
-    p_export.add_argument("--lang", required=True, choices=sorted(LANG_CODES.keys()), help="Target language code")
+    p_export.add_argument(
+        "--lang", required=True, choices=sorted(LANG_CODES.keys()), help="Target language code"
+    )
     p_export.add_argument("--output", required=True, help="Output directory for translated files")
     p_export.add_argument("--master", default="", help="Optional master translation TSV")
 
     p_gui = sub.add_parser("gui", help="Run desktop translator GUI")
     p_gui.add_argument("--game-root", default="", help="Optional game root folder")
-    p_gui.add_argument("--lang", default="", choices=[""] + sorted(LANG_CODES.keys()), help="Optional target language")
+    p_gui.add_argument(
+        "--lang",
+        default="",
+        choices=[""] + sorted(LANG_CODES.keys()),
+        help="Optional target language",
+    )
 
     args = parser.parse_args()
     if args.cmd == "project":
@@ -73,7 +86,11 @@ def main() -> int:
             project.target_lang,
             project.game_root,
         )
-        result = {"project_dir": str(project.project_dir), "base": base_result, "cache": rebuild_result}
+        result = {
+            "project_dir": str(project.project_dir),
+            "base": base_result,
+            "cache": rebuild_result,
+        }
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "qa":
@@ -111,4 +128,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -1,11 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import sqlite3
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QRegularExpression, QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QRegularExpression, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
 from PyQt6.QtWidgets import (
     QApplication,
@@ -35,7 +35,13 @@ from ..build import build_translation_release
 from ..db import open_db, rebuild_cache
 from ..glossary import export_glossary_from_db, load_glossary_to_db
 from ..overlay import cn_hash, load_overlay, load_translation_rows, save_translation_rows
-from ..project import LANG_CODES, ProjectPaths, load_project_meta, load_recent_projects, open_project
+from ..project import (
+    LANG_CODES,
+    ProjectPaths,
+    load_project_meta,
+    load_recent_projects,
+    open_project,
+)
 from ..qa import run_qa
 from ..tm import rebuild_tm
 from ..version import detect_client_version
@@ -95,7 +101,9 @@ class ProjectOpenWorker(QObject):
             base_dir = Path(base_result["base_dir"])
             version = str(base_result["version"])
             self.progress.emit("Building project database...")
-            rebuild_cache(project.db_path, base_dir, version, project.target_lang, project.game_root)
+            rebuild_cache(
+                project.db_path, base_dir, version, project.target_lang, project.game_root
+            )
             self.finished.emit(project)
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))
@@ -143,7 +151,8 @@ class MainWindow(QMainWindow):
             if not self._restore_last_project():
                 self.base_warning.setVisible(True)
                 self.base_warning.setText(
-                    "No project opened. Click 'Open project' to choose game folder and target language."
+                    "No project opened. Click 'Open project' to choose game folder "
+                    "and target language."
                 )
 
     def _build_ui(self) -> None:
@@ -257,19 +266,23 @@ class MainWindow(QMainWindow):
             editor.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         else:
             editor.setProperty("editableField", True)
-        setattr(editor, "_tag_highlighter", TagHighlighter(editor.document()))
+        editor._tag_highlighter = TagHighlighter(editor.document())
 
     def _toolbar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
         bar.addWidget(QLabel("State"))
         self.state_filter = QComboBox()
-        self.state_filter.addItems(["", "new", "changed", "master", "untranslated", "outdated", "official"])
+        self.state_filter.addItems(
+            ["", "new", "changed", "master", "untranslated", "outdated", "official"]
+        )
         self.state_filter.currentTextChanged.connect(self._apply_filters)
         bar.addWidget(self.state_filter)
 
         bar.addWidget(QLabel("Category"))
         self.category_filter = QComboBox()
-        self.category_filter.addItems(["", "notranslate", "skill", "weapon", "format", "dialog", "ui_label", "other"])
+        self.category_filter.addItems(
+            ["", "notranslate", "skill", "weapon", "format", "dialog", "ui_label", "other"]
+        )
         self.category_filter.currentTextChanged.connect(self._apply_filters)
         bar.addWidget(self.category_filter)
 
@@ -379,7 +392,9 @@ class MainWindow(QMainWindow):
         updated = 0
         target_text = self.target.toPlainText()
         target_cn = row["cn"]
-        batch = self.conn.execute("SELECT id, cn, en FROM strings WHERE cn = ?", (target_cn,)).fetchall()
+        batch = self.conn.execute(
+            "SELECT id, cn, en FROM strings WHERE cn = ?", (target_cn,)
+        ).fetchall()
         for item in batch:
             row_id = item["id"]
             self.mine_rows[row_id] = {
@@ -398,13 +413,17 @@ class MainWindow(QMainWindow):
         if self.project is None:
             QMessageBox.warning(self, "Project", "Open a project first.")
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Open master translation TSV", str(self.project.project_dir), "*.tsv")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open master translation TSV", str(self.project.project_dir), "*.tsv"
+        )
         if not path:
             return
         self.master_overlay_path = Path(path)
         self.master_overlay_rows = load_overlay(self.master_overlay_path)
         self._sync_repo_overlays(reload_model=True)
-        QMessageBox.information(self, "Master translation", f"Loaded rows: {len(self.master_overlay_rows)}")
+        QMessageBox.information(
+            self, "Master translation", f"Loaded rows: {len(self.master_overlay_rows)}"
+        )
 
     def _run_qa(self) -> None:
         if self.project is None:
@@ -423,7 +442,9 @@ class MainWindow(QMainWindow):
     def _load_glossary(self) -> None:
         if self.project is None:
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Open glossary TSV", str(self.project.project_dir), "*.tsv")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open glossary TSV", str(self.project.project_dir), "*.tsv"
+        )
         if not path:
             return
         result = load_glossary_to_db(self.project.db_path, Path(path))
@@ -434,7 +455,9 @@ class MainWindow(QMainWindow):
     def _save_glossary(self) -> None:
         if self.project is None:
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Save glossary TSV", str(self.project.project_dir / "glossary.tsv"), "*.tsv")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save glossary TSV", str(self.project.project_dir / "glossary.tsv"), "*.tsv"
+        )
         if not path:
             return
         result = export_glossary_from_db(self.project.db_path, Path(path))
@@ -482,7 +505,9 @@ class MainWindow(QMainWindow):
         if not game_dir:
             return
         langs = [lang for lang in LANG_CODES.keys() if lang != "zh_cn"]
-        target_lang, ok = QInputDialog.getItem(self, "Target language", "Choose target language", langs, 0, False)
+        target_lang, ok = QInputDialog.getItem(
+            self, "Target language", "Choose target language", langs, 0, False
+        )
         if not ok or not target_lang:
             return
         self._open_project(Path(game_dir), target_lang)

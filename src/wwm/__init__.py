@@ -1,2 +1,1 @@
 """WWM localization toolkit."""
-

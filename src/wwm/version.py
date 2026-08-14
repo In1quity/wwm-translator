@@ -22,4 +22,3 @@ def detect_client_version(game_root: Path) -> str:
         except json.JSONDecodeError:
             pass
     return raw
-

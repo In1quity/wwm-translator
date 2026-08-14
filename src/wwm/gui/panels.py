@@ -26,7 +26,10 @@ def fill_glossary_panel(conn: sqlite3.Connection, cn: str, en: str) -> list[str]
         """,
         (cn, en),
     ).fetchall()
-    return [f"{row['category']} | {row['en']} => {row['target']} (strict={row['strict']})" for row in rows]
+    return [
+        f"{row['category']} | {row['en']} => {row['target']} (strict={row['strict']})"
+        for row in rows
+    ]
 
 
 def fill_qa_panel(conn: sqlite3.Connection, row_id: str) -> list[str]:
@@ -39,5 +42,7 @@ def fill_qa_panel(conn: sqlite3.Connection, row_id: str) -> list[str]:
 
 def fill_preview_panel(conn: sqlite3.Connection, source_id: str) -> list[str]:
     rows = preview_same_cn(conn, source_id, 500)
-    return [f"{row['id']} | EN={row['en'][:35]} | target_official={row['target_official'][:35]}" for row in rows]
-
+    return [
+        f"{row['id']} | EN={row['en'][:35]} | target_official={row['target_official'][:35]}"
+        for row in rows
+    ]

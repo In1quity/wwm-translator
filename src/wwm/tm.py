@@ -12,7 +12,9 @@ except ImportError:  # pragma: no cover
 
 def rebuild_tm(conn: sqlite3.Connection) -> dict[str, int]:
     conn.execute("DELETE FROM tm")
-    rows = conn.execute("SELECT cn, target_official FROM strings WHERE cn != '' AND target_official != ''").fetchall()
+    rows = conn.execute(
+        "SELECT cn, target_official FROM strings WHERE cn != '' AND target_official != ''"
+    ).fetchall()
     counts: dict[tuple[str, str], int] = defaultdict(int)
     for row in rows:
         counts[(row["cn"], row["target_official"])] += 1
@@ -29,7 +31,9 @@ def exact_candidates(conn: sqlite3.Connection, cn_text: str, limit: int = 20) ->
     ).fetchall()
 
 
-def fuzzy_candidates(conn: sqlite3.Connection, cn_text: str, threshold: int = 80, limit: int = 20) -> list[tuple[str, str, int]]:
+def fuzzy_candidates(
+    conn: sqlite3.Connection, cn_text: str, threshold: int = 80, limit: int = 20
+) -> list[tuple[str, str, int]]:
     rows = conn.execute("SELECT cn, target, hits FROM tm ORDER BY hits DESC LIMIT 30000").fetchall()
     found: list[tuple[str, str, int]] = []
     for row in rows:
@@ -40,7 +44,9 @@ def fuzzy_candidates(conn: sqlite3.Connection, cn_text: str, threshold: int = 80
     return found[:limit]
 
 
-def preview_same_cn(conn: sqlite3.Connection, source_id: str, limit: int = 300) -> list[sqlite3.Row]:
+def preview_same_cn(
+    conn: sqlite3.Connection, source_id: str, limit: int = 300
+) -> list[sqlite3.Row]:
     row = conn.execute("SELECT cn FROM strings WHERE id = ?", (source_id,)).fetchone()
     if row is None:
         return []
@@ -54,4 +60,3 @@ def _score(left: str, right: str) -> int:
     if fuzz is not None:
         return int(fuzz.ratio(left, right))
     return int(difflib.SequenceMatcher(a=left, b=right).ratio() * 100)
-

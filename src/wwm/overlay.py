@@ -26,7 +26,11 @@ def load_overlay(path: Path) -> dict[str, dict[str, str]]:
             row_id = row_id.strip().lower()
             if not row_id:
                 continue
-            out[row_id] = {"cn_hash": saved_hash.strip(), "state": state.strip() or "ours", "target": ru}
+            out[row_id] = {
+                "cn_hash": saved_hash.strip(),
+                "state": state.strip() or "ours",
+                "target": ru,
+            }
     return out
 
 
@@ -37,7 +41,9 @@ def save_overlay(path: Path, rows: dict[str, dict[str, str]]) -> dict[str, int]:
         writer.writerow(OVERLAY_COLUMNS)
         for row_id in sorted(rows):
             item = rows[row_id]
-            writer.writerow([row_id, item.get("cn_hash", ""), item.get("state", "ours"), item.get("target", "")])
+            writer.writerow(
+                [row_id, item.get("cn_hash", ""), item.get("state", "ours"), item.get("target", "")]
+            )
     return {"rows": len(rows)}
 
 
@@ -84,4 +90,3 @@ def save_translation_rows(path: Path, rows: dict[str, dict[str, str]]) -> dict[s
                 ]
             )
     return {"rows": len(rows)}
-

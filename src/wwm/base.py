@@ -63,14 +63,17 @@ def build_versioned_base(project: ProjectPaths, force: bool = False) -> dict[str
         "target_lang": project.target_lang,
         "game_root": str(project.game_root),
         "counts": stats,
-        "hashes": {
-            label: _hash_rows(merged_rows[label]) for label in ("cn", "en", "target")
-        },
+        "hashes": {label: _hash_rows(merged_rows[label]) for label in ("cn", "en", "target")},
     }
     manifest_path = project.meta_path
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     shutil.rmtree(work, ignore_errors=True)
-    return {"version": version, "base_dir": str(out_dir), "manifest": str(manifest_path), "counts": stats}
+    return {
+        "version": version,
+        "base_dir": str(out_dir),
+        "manifest": str(manifest_path),
+        "counts": stats,
+    }
 
 
 def _source_dir(game_root: Path, source: str) -> Path:
@@ -114,4 +117,3 @@ def _hash_rows(rows: dict[str, str]) -> str:
         digest.update(rows[row_id].encode("utf-8"))
         digest.update(b"\n")
     return digest.hexdigest()
-

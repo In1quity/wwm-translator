@@ -66,7 +66,9 @@ def project_slug(game_root: Path, target_lang: str) -> str:
     return f"{normalized}_{target_lang}"
 
 
-def open_project(game_root: Path, target_lang: str, app_name: str = "WWMTranslator") -> ProjectPaths:
+def open_project(
+    game_root: Path, target_lang: str, app_name: str = "WWMTranslator"
+) -> ProjectPaths:
     lang = (target_lang or "").strip().lower()
     if lang not in LANG_CODES:
         raise ValueError(f"Unsupported target language: {target_lang}")
@@ -114,7 +116,9 @@ def load_project_meta(project: ProjectPaths) -> dict[str, object]:
 
 def save_project_meta(project: ProjectPaths, payload: dict[str, object]) -> None:
     project.meta_path.parent.mkdir(parents=True, exist_ok=True)
-    project.meta_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    project.meta_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def remember_project(project: ProjectPaths) -> None:
@@ -130,7 +134,13 @@ def remember_project(project: ProjectPaths) -> None:
                         target_lang = str(item.get("target_lang", ""))
                         project_dir = str(item.get("project_dir", ""))
                         if game_root and target_lang and project_dir:
-                            current.append({"game_root": game_root, "target_lang": target_lang, "project_dir": project_dir})
+                            current.append(
+                                {
+                                    "game_root": game_root,
+                                    "target_lang": target_lang,
+                                    "project_dir": project_dir,
+                                }
+                            )
         except json.JSONDecodeError:
             current = []
     current = [x for x in current if x["project_dir"] != str(project.project_dir)]
@@ -165,5 +175,7 @@ def load_recent_projects(app_name: str = "WWMTranslator") -> list[RecentProject]
         project_dir = Path(str(item.get("project_dir", ""))).resolve()
         if not target_lang or not project_dir:
             continue
-        out.append(RecentProject(game_root=game_root, target_lang=target_lang, project_dir=project_dir))
+        out.append(
+            RecentProject(game_root=game_root, target_lang=target_lang, project_dir=project_dir)
+        )
     return out

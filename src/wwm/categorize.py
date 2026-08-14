@@ -25,7 +25,9 @@ def run_categorization(conn: sqlite3.Connection) -> dict[str, int]:
     counts: dict[str, int] = {}
     for row in rows:
         cat, conf = infer_category(row["cn"] or "", row["en"] or "")
-        conn.execute("UPDATE strings SET category = ?, cat_conf = ? WHERE id = ?", (cat, conf, row["id"]))
+        conn.execute(
+            "UPDATE strings SET category = ?, cat_conf = ? WHERE id = ?", (cat, conf, row["id"])
+        )
         counts[cat] = counts.get(cat, 0) + 1
     conn.commit()
     return {"rows": len(rows), **{f"cat_{k}": v for k, v in counts.items()}}
@@ -45,4 +47,3 @@ def infer_category(cn: str, en: str) -> tuple[str, float]:
     if cn and len(cn) < 18 and not PUNCT_RE.search(cn):
         return ("ui_label", 0.62)
     return ("other", 0.4)
-
