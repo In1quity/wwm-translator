@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 import zipfile
 from pathlib import Path
@@ -85,7 +86,8 @@ def _rewrite_container(
     output_root: Path,
     overlay_map: dict[str, str],
 ) -> tuple[Path, int]:
-    work_key = str(input_file).replace(":", "").replace("\\", "__").replace("/", "__")
+    raw_key = str(input_file.resolve()).encode("utf-8", errors="ignore")
+    work_key = hashlib.sha1(raw_key).hexdigest()[:16]
     work = project.temp_root / "build_work" / work_key
     dat_dir = work / "dat"
     rewritten = work / "rewritten"
