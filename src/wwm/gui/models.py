@@ -10,6 +10,7 @@ from PyQt6.QtGui import QColor
 from ..overlay import cn_hash
 
 HEADERS = ["state", "category", "id", "cn", "en", "target", "target_official"]
+ACTION_HEADERS = ["+", "-"]
 _EMPTY_MODEL_INDEX = QModelIndex()
 STATE_COLORS = {
     "new": QColor("#2d4f8b"),
@@ -17,6 +18,7 @@ STATE_COLORS = {
     "master": QColor("#245a7a"),
     "outdated": QColor("#8b2d2d"),
     "approved": QColor("#205c52"),
+    "rejected": QColor("#6b2d2d"),
     "official": QColor("#3f3f3f"),
     "untranslated": QColor("#555555"),
     "notranslate": QColor("#4a4a4a"),
@@ -157,7 +159,7 @@ class StringsRepository:
             if master_item and master_item.get("cn_hash", "") != current_hash:
                 return ("outdated", target_mine, target_master)
             mine_state = mine_item.get("state", "ours")
-            if mine_state in ("approved", "notranslate"):
+            if mine_state in ("approved", "notranslate", "rejected"):
                 return (mine_state, target_mine, target_master)
             if not master_item:
                 return ("new", target_mine, "")
@@ -247,7 +249,16 @@ class StringsRepository:
 
     def _compute_search_ids(self, q: QueryState) -> list[str]:
         needle = (q.search or "").casefold()
-        sparse_states = {"changed", "approved", "notranslate", "outdated", "new", "master", "ours"}
+        sparse_states = {
+            "changed",
+            "approved",
+            "rejected",
+            "notranslate",
+            "outdated",
+            "new",
+            "master",
+            "ours",
+        }
         if not needle and q.state == "new" and not self.mine_overlay:
             return []
 
@@ -326,7 +337,16 @@ class StringsRepository:
         return [(item["id"] or "").lower() for item in matched_items]
 
     def _use_materialized_ids(self, q: QueryState) -> bool:
-        overlay_states = {"changed", "approved", "notranslate", "outdated", "new", "master", "ours"}
+        overlay_states = {
+            "changed",
+            "approved",
+            "rejected",
+            "notranslate",
+            "outdated",
+            "new",
+            "master",
+            "ours",
+        }
         return bool(q.search) or q.sort_by in ("state", "target") or (q.state in overlay_states)
 
     def _search_candidate_ids(self, needle: str) -> set[str]:
@@ -501,13 +521,13 @@ class StringsTableModel(QAbstractTableModel):
 
     def columnCount(self, parent: QModelIndex = _EMPTY_MODEL_INDEX) -> int:  # noqa: N802
         _ = parent
-        return len(HEADERS)
+        return len(ACTION_HEADERS) + len(HEADERS)
 
     def headerData(self, section: int, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
         if role != Qt.ItemDataRole.DisplayRole:
             return None
         if orientation == Qt.Orientation.Horizontal:
-            return HEADERS[section]
+            return self._column_name(section)
         return section + 1
 
     def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
@@ -516,7 +536,29 @@ class StringsTableModel(QAbstractTableModel):
         row = self._row(index.row())
         if row is None:
             return None
-        col = HEADERS[index.column()]
+        column = index.column()
+        if column < len(ACTION_HEADERS):
+            row_id = (row.get("id") or "").lower()
+            mine_state = self.repo.mine_overlay.get(row_id, {}).get("state", "ours")
+            is_accept = column == 0
+            is_active = mine_state == ("approved" if is_accept else "rejected")
+            if role == Qt.ItemDataRole.DisplayRole:
+                return ACTION_HEADERS[column]
+            if role == Qt.ItemDataRole.ToolTipRole:
+                if is_accept:
+                    return "Accept: include in master translation"
+                return "Reject: exclude from master translation"
+            if role == Qt.ItemDataRole.ForegroundRole:
+                if is_active:
+                    return QColor("#f0f0f0")
+                return QColor("#7a7a7a")
+            if role == Qt.ItemDataRole.TextAlignmentRole:
+                return int(Qt.AlignmentFlag.AlignCenter)
+            if role == Qt.ItemDataRole.BackgroundRole:
+                return STATE_COLORS.get(row["state"], None)
+            return None
+
+        col = HEADERS[column - len(ACTION_HEADERS)]
         if role == Qt.ItemDataRole.DisplayRole:
             return row[col]
         if role == Qt.ItemDataRole.BackgroundRole:
@@ -530,9 +572,11 @@ class StringsTableModel(QAbstractTableModel):
         self.reload()
 
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:  # noqa: N802
-        if column < 0 or column >= len(HEADERS):
+        if column < 0 or column >= len(ACTION_HEADERS) + len(HEADERS):
             return
-        self.q.sort_by = HEADERS[column]
+        if column < len(ACTION_HEADERS):
+            return
+        self.q.sort_by = HEADERS[column - len(ACTION_HEADERS)]
         self.q.sort_desc = order == Qt.SortOrder.DescendingOrder
         self.reload()
 
@@ -548,6 +592,39 @@ class StringsTableModel(QAbstractTableModel):
         if row is None:
             return None
         return str(row["id"])
+
+    def refresh_row(self, row_index: int) -> None:
+        if row_index < 0 or row_index >= self.total:
+            return
+        page = row_index // self.page_size
+        rel = row_index % self.page_size
+        chunk = self.cache.get(page)
+        if chunk is None or rel >= len(chunk):
+            return
+        row_id = chunk[rel].get("id", "")
+        fresh = self.repo.get_row(row_id)
+        if fresh is None:
+            return
+        chunk[rel] = {
+            "state": fresh["state"],
+            "category": fresh["category"],
+            "id": fresh["id"],
+            "cn": fresh["cn"],
+            "en": fresh["en"],
+            "target": fresh["target"],
+            "target_official": fresh["target_official"],
+        }
+        top_left = self.index(row_index, 0)
+        bottom_right = self.index(row_index, self.columnCount() - 1)
+        self.dataChanged.emit(top_left, bottom_right)
+
+    def _column_name(self, section: int) -> str:
+        if section < len(ACTION_HEADERS):
+            return ACTION_HEADERS[section]
+        data_idx = section - len(ACTION_HEADERS)
+        if data_idx < len(HEADERS):
+            return HEADERS[data_idx]
+        return ""
 
     def _row(self, index: int) -> dict[str, str] | None:
         page = index // self.page_size

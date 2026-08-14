@@ -90,3 +90,19 @@ def save_translation_rows(path: Path, rows: dict[str, dict[str, str]]) -> dict[s
                 ]
             )
     return {"rows": len(rows)}
+
+
+def merge_master_rows(
+    master_rows: dict[str, dict[str, str]],
+    mine_rows: dict[str, dict[str, str]],
+) -> dict[str, dict[str, str]]:
+    out = {row_id: dict(item) for row_id, item in master_rows.items()}
+    for row_id, item in mine_rows.items():
+        if item.get("state", "") != "approved":
+            continue
+        out[row_id] = {
+            "cn_hash": item.get("cn_hash", ""),
+            "state": "ours",
+            "target": item.get("target", ""),
+        }
+    return out
