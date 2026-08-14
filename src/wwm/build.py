@@ -16,6 +16,7 @@ def build_translation_release(
 ) -> dict[str, object]:
     overlay_map = _overlay_to_map(overlay_rows)
     abs_out = output_dir.resolve()
+    _validate_export_output_dir(project, abs_out)
     if abs_out.exists():
         shutil.rmtree(abs_out)
     abs_out.mkdir(parents=True, exist_ok=True)
@@ -61,6 +62,21 @@ def build_translation_release(
         "touched_ids": touched_ids,
         "zip": str(zip_path),
     }
+
+
+def _validate_export_output_dir(project: ProjectPaths, output_dir: Path) -> None:
+    protected = [
+        project.project_dir.resolve(),
+        project.db_path.resolve(),
+        project.base_root.resolve(),
+        project.temp_root.resolve(),
+    ]
+    for item in protected:
+        if _is_within(item, output_dir):
+            raise ValueError(
+                "Export directory points to project internal data. "
+                "Choose another folder outside data/projects."
+            )
 
 
 def _rewrite_container(
@@ -137,3 +153,11 @@ def _to_release_relative(project: ProjectPaths, input_file: Path) -> Path:
         idx = parts.index("LocalData")
         return Path(*parts[idx:])
     return Path(input_file.name)
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
