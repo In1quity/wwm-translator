@@ -234,7 +234,7 @@ class MainWindow(QMainWindow):
         row_buttons = QHBoxLayout()
         btn_save = QPushButton("Save translation")
         btn_save.clicked.connect(self._save_translations)
-        btn_apply = QPushButton("Apply to same CN")
+        btn_apply = QPushButton("Apply to same source text")
         btn_apply.clicked.connect(self._apply_same_cn)
         row_buttons.addWidget(btn_save)
         row_buttons.addWidget(btn_apply)
@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
         btn_export.clicked.connect(self._export_release)
         btn_qa = QPushButton("Run QA")
         btn_qa.clicked.connect(self._run_qa)
-        btn_tm = QPushButton("Rebuild TM")
+        btn_tm = QPushButton("Rebuild translation memory")
         btn_tm.clicked.connect(self._rebuild_tm)
         for button in (
             btn_open_project,
