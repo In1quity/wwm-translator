@@ -13,16 +13,16 @@ HEADERS = ["state", "category", "id", "cn", "en", "target", "target_official"]
 ACTION_HEADERS = ["+", "-"]
 _EMPTY_MODEL_INDEX = QModelIndex()
 STATE_COLORS = {
-    "new": QColor("#2d4f8b"),
-    "changed": QColor("#2d6b3c"),
+    "new": QColor("#8a7420"),
+    "changed": QColor("#8a7420"),
     "master": QColor("#245a7a"),
     "outdated": QColor("#8b2d2d"),
-    "approved": QColor("#205c52"),
+    "approved": QColor("#2d6b3c"),
     "rejected": QColor("#6b2d2d"),
     "official": QColor("#3f3f3f"),
     "untranslated": QColor("#555555"),
     "notranslate": QColor("#4a4a4a"),
-    "ours": QColor("#2d6b3c"),
+    "ours": QColor("#8a7420"),
 }
 
 
@@ -165,7 +165,7 @@ class StringsRepository:
                 return ("new", target_mine, "")
             if target_mine.strip() != target_master.strip():
                 return ("changed", target_mine, target_master)
-            return ("master", target_master, target_master)
+            return ("ours", target_mine, target_master)
 
         if master_item:
             if master_item.get("cn_hash", "") != current_hash:
@@ -617,6 +617,16 @@ class StringsTableModel(QAbstractTableModel):
         top_left = self.index(row_index, 0)
         bottom_right = self.index(row_index, self.columnCount() - 1)
         self.dataChanged.emit(top_left, bottom_right)
+
+    def refresh_row_by_id(self, row_id: str) -> None:
+        key = (row_id or "").lower()
+        if not key:
+            return
+        for page, chunk in self.cache.items():
+            for rel, item in enumerate(chunk):
+                if (item.get("id") or "").lower() == key:
+                    self.refresh_row(page * self.page_size + rel)
+                    return
 
     def _column_name(self, section: int) -> str:
         if section < len(ACTION_HEADERS):

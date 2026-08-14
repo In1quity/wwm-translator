@@ -132,6 +132,35 @@ class ProjectOpenWorker(QObject):
             conn.close()
 
 
+class ExportWorker(QObject):
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(
+        self,
+        project: ProjectPaths,
+        output_dir: Path,
+        overlay_rows: dict[str, dict[str, str]],
+    ) -> None:
+        super().__init__()
+        self.project = project
+        self.output_dir = output_dir
+        self.overlay_rows = overlay_rows
+
+    def run(self) -> None:
+        try:
+            self.progress.emit("Building translation release...")
+            result = build_translation_release(
+                self.project,
+                self.output_dir,
+                self.overlay_rows,
+            )
+            self.finished.emit(result)
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
     def __init__(self, game_root: Path | None = None, target_lang: str | None = None) -> None:
         super().__init__()
@@ -146,6 +175,10 @@ class MainWindow(QMainWindow):
         self._project_thread: QThread | None = None
         self._project_worker: ProjectOpenWorker | None = None
         self._project_progress: QProgressDialog | None = None
+        self._export_thread: QThread | None = None
+        self._export_worker: ExportWorker | None = None
+        self._export_progress: QProgressDialog | None = None
+        self._export_output_dir: Path | None = None
 
         self.setWindowTitle("WWM Translator")
         self.resize(1800, 1000)
@@ -375,6 +408,8 @@ class MainWindow(QMainWindow):
             "en": row["en"],
         }
         self._sync_repo_overlays(reload_model=False)
+        if self.model is not None:
+            self.model.refresh_row_by_id(key)
         return True
 
     def _on_row(self, index: QModelIndex | None = None) -> None:
@@ -738,26 +773,68 @@ class MainWindow(QMainWindow):
     def _export_release(self) -> None:
         if self.project is None:
             return
-        output_dir = Path(sys.executable).resolve().parent / "export"
-        try:
-            result = build_translation_release(
-                self.project,
-                output_dir,
-                self._effective_export_overlay(),
-            )
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Export failed", str(exc))
+        if self._export_thread is not None:
+            QMessageBox.information(self, "Export", "Export is already in progress.")
             return
+        self._persist_current_row()
+        output_dir = Path(sys.executable).resolve().parent / "export"
+        overlay_rows = self._effective_export_overlay()
+        self._export_output_dir = output_dir
+
+        self._export_progress = QProgressDialog("Exporting translation...", "", 0, 0, self)
+        self._export_progress.setWindowTitle("Please wait")
+        self._export_progress.setCancelButton(None)
+        self._export_progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self._export_progress.setMinimumDuration(0)
+        self._export_progress.show()
+
+        self._export_thread = QThread(self)
+        self._export_worker = ExportWorker(self.project, output_dir, overlay_rows)
+        self._export_worker.moveToThread(self._export_thread)
+        self._export_thread.started.connect(self._export_worker.run)
+        self._export_worker.progress.connect(self._on_export_progress)
+        self._export_worker.finished.connect(self._on_export_ready)
+        self._export_worker.failed.connect(self._on_export_failed)
+        self._export_worker.finished.connect(self._export_thread.quit)
+        self._export_worker.failed.connect(self._export_thread.quit)
+        self._export_thread.finished.connect(self._cleanup_export_loader)
+        self._export_thread.start()
+
+    def _on_export_progress(self, message: str) -> None:
+        if self._export_progress is not None:
+            self._export_progress.setLabelText(message)
+
+    def _on_export_failed(self, message: str) -> None:
+        if self._export_progress is not None:
+            self._export_progress.close()
+        QMessageBox.critical(self, "Export failed", message)
+
+    def _on_export_ready(self, result_obj: object) -> None:
+        if self._export_progress is not None:
+            self._export_progress.close()
+        if not isinstance(result_obj, dict):
+            QMessageBox.critical(self, "Export failed", "Invalid export result returned.")
+            return
+        output_dir = self._export_output_dir or Path("")
+        built_files = result_obj.get("built_files", [])
+        archive = result_obj.get("zip", "")
+        built_count = len(built_files) if isinstance(built_files, list) else 0
         message = (
-            f"Built files: {len(result['built_files'])}\n"
-            f"Archive: {result['zip']}\n"
+            f"Built files: {built_count}\n"
+            f"Archive: {archive}\n"
             f"Output: {output_dir}"
         )
-        QMessageBox.information(
-            self,
-            "Export finished",
-            message,
-        )
+        QMessageBox.information(self, "Export finished", message)
+
+    def _cleanup_export_loader(self) -> None:
+        if self._export_worker is not None:
+            self._export_worker.deleteLater()
+        if self._export_thread is not None:
+            self._export_thread.deleteLater()
+        self._export_worker = None
+        self._export_thread = None
+        self._export_progress = None
+        self._export_output_dir = None
 
     def _disable_editor(self) -> None:
         self.table.setEnabled(False)
