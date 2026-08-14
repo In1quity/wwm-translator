@@ -421,7 +421,10 @@ class MainWindow(QMainWindow):
         toggled_state = "ours"
         if current is None or current.get("state", "ours") != next_state:
             toggled_state = next_state
-        target_text = current.get("target", row.get("target", "")) if current else row.get("target", "")
+        if current:
+            target_text = current.get("target", row.get("target", ""))
+        else:
+            target_text = row.get("target", "")
         self.mine_rows[key] = {
             "cn_hash": cn_hash(row["cn"]),
             "state": toggled_state,
@@ -464,7 +467,8 @@ class MainWindow(QMainWindow):
         if self.project is None:
             return
         self._persist_current_row()
-        output_path = self.master_overlay_path or (self.project.project_dir / "master_translation.tsv")
+        default_master = self.project.project_dir / "master_translation.tsv"
+        output_path = self.master_overlay_path or default_master
         merged = merge_master_rows(self.master_overlay_rows, self.mine_rows)
         save_overlay(output_path, merged)
 
