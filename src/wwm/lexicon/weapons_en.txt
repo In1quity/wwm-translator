@@ -1,0 +1,13 @@
+Sword
+Spear
+Blade
+Umbrella
+Fan
+Dart
+Twinblades
+Dagger
+Bow
+Staff
+Hammer
+Axe
+

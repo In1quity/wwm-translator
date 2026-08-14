@@ -1,0 +1,8 @@
+build/
+dist/
+local/
+origin/
+data/
+node_modules/
+*.pyc
+.pytest_cache/

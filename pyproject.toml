@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wwm-translator"
+version = "0.1.0"
+description = "Standalone Where Winds Meet localization translator"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "pyzstd>=0.15",
+  "PyQt6>=6.7",
+  "rapidfuzz>=3.0",
+]
+
+[project.scripts]
+wwm = "wwm.cli:main"
+wwm-translator = "wwm.gui.app:main"
+
+[project.optional-dependencies]
+dev = [
+  "pyinstaller>=6.10",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
