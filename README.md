@@ -5,6 +5,9 @@ Standalone desktop translator for **Where Winds Meet** locale containers.
 This repository now contains only translator code. Translation content is loaded from external files
 and stored in local project folders.
 
+Part of the locale parsing logic is based on the original community project:
+`https://github.com/DOG729/wwm_russian`.
+
 ## Core behavior
 
 - Opens a game folder and target language (`de/en/es/fr/ja/ko/pt_br/ru/th/vi/zh_tw`).
