@@ -11,7 +11,8 @@ def test_render_supports_escaped_newlines() -> None:
 
 def test_render_keeps_link_tags_as_single_token() -> None:
     html, warnings = render_text_to_html("<Название|780|#C|15>")
-    assert "#C" in html
+    assert "Название" in html
+    assert "#C" not in html
     assert "unknown tag #C" not in warnings
 
 
@@ -42,3 +43,15 @@ def test_render_supports_dollar_wrapped_variables() -> None:
     html, warnings = render_text_to_html("$STEADY_MIN_PRO_ATK_E:.1f$")
     assert "$STEADY_MIN_PRO_ATK_E:.1f$" in html
     assert "opening $S without closing $E" not in warnings
+
+
+def test_render_supports_nested_link_payloads() -> None:
+    source = (
+        "<Заряженный навык <Бродячего меча|781|#C|10102|781>> "
+        "<Меча Безымянного|#C|10102|20201006>"
+    )
+    html, warnings = render_text_to_html(source)
+    assert "Заряженный навык Бродячего меча" in html
+    assert "Меча Безымянного" in html
+    assert "#C" not in html
+    assert not warnings

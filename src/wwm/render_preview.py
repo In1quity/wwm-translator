@@ -16,6 +16,77 @@ def _is_hex_color_tag(text: str, pos: int) -> bool:
     return all(ch in "0123456789abcdefABCDEF" for ch in chunk)
 
 
+def _find_matching_angle(text: str, start: int) -> int:
+    depth = 0
+    for idx in range(start, len(text)):
+        if text[idx] == "<":
+            depth += 1
+        elif text[idx] == ">":
+            depth -= 1
+            if depth == 0:
+                return idx
+    return -1
+
+
+def _split_top_level_pipes(text: str) -> list[str]:
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in text:
+        if ch == "<":
+            depth += 1
+        elif ch == ">" and depth > 0:
+            depth -= 1
+        if ch == "|" and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    parts.append("".join(current))
+    return parts
+
+
+def _contains_nested_pipe_link(text: str) -> bool:
+    idx = 0
+    while idx < len(text):
+        if text[idx] != "<":
+            idx += 1
+            continue
+        end = _find_matching_angle(text, idx)
+        if end == -1:
+            return False
+        inner = text[idx + 1 : end]
+        if len(_split_top_level_pipes(inner)) > 1:
+            return True
+        idx = end + 1
+    return False
+
+
+def _extract_visible_link_text(payload: str) -> str:
+    parts = _split_top_level_pipes(payload)
+    base = parts[0] if len(parts) > 1 else payload
+    out: list[str] = []
+    idx = 0
+    while idx < len(base):
+        if base[idx] != "<":
+            out.append(base[idx])
+            idx += 1
+            continue
+        end = _find_matching_angle(base, idx)
+        if end == -1:
+            out.append(base[idx])
+            idx += 1
+            continue
+        inner = base[idx + 1 : end]
+        nested_parts = _split_top_level_pipes(inner)
+        if len(nested_parts) > 1 or _contains_nested_pipe_link(inner):
+            out.append(_extract_visible_link_text(inner))
+        else:
+            out.append(base[idx : end + 1])
+        idx = end + 1
+    return "".join(out).strip()
+
+
 def render_text_to_html(text: str) -> tuple[str, list[str]]:
     warnings: list[str] = []
     out: list[str] = []
@@ -80,19 +151,21 @@ def render_text_to_html(text: str) -> tuple[str, list[str]]:
                 i += 2
                 continue
         if ch == "<":
-            end = text.find(">", i + 1)
+            end = _find_matching_angle(text, i)
+            if end == -1 and "|" in text[i : min(len(text), i + 60)]:
+                warnings.append("opening < link tag without closing >")
             if end != -1:
-                token = text[i : end + 1]
-                if token.count("|") == 3:
+                inner = text[i + 1 : end]
+                parts = _split_top_level_pipes(inner)
+                if len(parts) > 1 or _contains_nested_pipe_link(inner):
+                    visible = _extract_visible_link_text(inner)
                     out.append(
                         "<span style='color:#9AD1FF;font-weight:600'>"
-                        f"{escape(token)}"
+                        f"{escape(visible)}"
                         "</span>"
                     )
                     i = end + 1
                     continue
-            elif "|" in text[i : min(len(text), i + 60)]:
-                warnings.append("opening < link tag without closing >")
         if ch == "#" and i + 1 < len(text):
             code = text[i + 1]
             if _is_hex_color_tag(text, i):
