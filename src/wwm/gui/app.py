@@ -86,7 +86,8 @@ class TagHighlighter(QSyntaxHighlighter):
         game_tag = QTextCharFormat()
         game_tag.setForeground(QColor("#F4D35E"))
         game_tag.setFontWeight(QFont.Weight.Bold)
-        self.rules.append((QRegularExpression(r"#[A-Za-z][^#\n]{0,200}#(?:[A-Za-z]|$)"), game_tag))
+        self.rules.append((QRegularExpression(r"#(?:Y|G)[^#\n]{0,400}#E"), game_tag))
+        self.rules.append((QRegularExpression(r"#[0-9A-Fa-f]{6}[^#\n]{0,400}#E"), game_tag))
 
         placeholder = QTextCharFormat()
         placeholder.setForeground(QColor("#7BDFF2"))
