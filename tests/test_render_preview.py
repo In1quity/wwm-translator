@@ -64,3 +64,9 @@ def test_render_keeps_separator_angle_for_double_closing_pattern() -> None:
     )
     html, _warnings = render_text_to_html(source)
     assert "&gt; <span style='color:#9AD1FF;font-weight:600'>" in html
+
+
+def test_render_supports_w_separator() -> None:
+    html, warnings = render_text_to_html("a/wb\\wc")
+    assert "<br/><br/>" in html
+    assert not warnings

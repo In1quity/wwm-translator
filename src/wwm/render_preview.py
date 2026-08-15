@@ -101,6 +101,10 @@ def render_text_to_html(text: str) -> tuple[str, list[str]]:
                 out.append("<br/>")
                 i += 2
                 continue
+            if escaped == "w":
+                out.append("<br/><br/>")
+                i += 2
+                continue
             if escaped == "r":
                 i += 2
                 continue
@@ -125,6 +129,10 @@ def render_text_to_html(text: str) -> tuple[str, list[str]]:
             escaped = text[i + 1]
             if escaped == "n":
                 out.append("<br/>")
+                i += 2
+                continue
+            if escaped == "w":
+                out.append("<br/><br/>")
                 i += 2
                 continue
             if escaped == "r":
