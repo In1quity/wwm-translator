@@ -6,7 +6,7 @@ The application supports two translation TSV schemas.
 
 Header:
 
-`ID	cn_hash	state	target`
+`ID	cn_hash	state	target	needs_context	notes`
 
 Fields:
 
@@ -14,6 +14,8 @@ Fields:
 - `cn_hash` — first 16 chars of SHA-256 for CN text.
 - `state` — optional status marker (usually `ours`, `master`, `approved`, `notranslate`).
 - `target` — translated text.
+- `needs_context` — `1`/`0` flag.
+- `notes` — free multiline notes text.
 
 Used by:
 
@@ -24,12 +26,14 @@ Used by:
 
 Header:
 
-`ID	cn_hash	state	target	cn	en`
+`ID	cn_hash	state	target	cn	en	needs_context	notes`
 
 Additional fields:
 
 - `cn` — source CN snapshot for review/debug.
 - `en` — source EN snapshot for review/debug.
+- `needs_context` — per-row context request flag (`1`/`0`).
+- `notes` — per-row notes text.
 
 Used by:
 

@@ -7,6 +7,8 @@ def test_merge_master_rows_keeps_master_and_adds_only_approved() -> None:
     master_rows = {
         "id_a": {"cn_hash": "h1", "state": "ours", "target": "Master A"},
         "id_b": {"cn_hash": "h2", "state": "ours", "target": "Master B"},
+        "id_x": {"cn_hash": "hx", "state": "ours", "target": "Master X"},
+        "id_r": {"cn_hash": "hr", "state": "ours", "target": "Master R"},
     }
     mine_rows = {
         "id_b": {
@@ -37,6 +39,27 @@ def test_merge_master_rows_keeps_master_and_adds_only_approved() -> None:
             "cn": "cn e",
             "en": "en e",
         },
+        "id_x": {
+            "cn_hash": "hx",
+            "state": "approved",
+            "target": "",
+            "cn": "cn x",
+            "en": "en x",
+        },
+        "id_z": {
+            "cn_hash": "hz",
+            "state": "approved",
+            "target": "",
+            "cn": "cn z",
+            "en": "en z",
+        },
+        "id_r": {
+            "cn_hash": "hr",
+            "state": "rejected",
+            "target": "Rejected text",
+            "cn": "cn r",
+            "en": "en r",
+        },
     }
 
     merged = merge_master_rows(master_rows, mine_rows)
@@ -44,5 +67,8 @@ def test_merge_master_rows_keeps_master_and_adds_only_approved() -> None:
     assert merged["id_a"]["target"] == "Master A"
     assert merged["id_b"]["target"] == "Mine Approved Update"
     assert merged["id_c"]["target"] == "Mine Approved New"
+    assert merged["id_x"]["target"] == "Master X"
+    assert merged["id_r"]["target"] == "Master R"
     assert "id_d" not in merged
     assert "id_e" not in merged
+    assert "id_z" not in merged

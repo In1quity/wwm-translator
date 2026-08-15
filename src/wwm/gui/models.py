@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtGui import QColor
 
-from ..overlay import cn_hash
+from ..overlay import cn_hash, is_mine_layer_active
 
 HEADERS = ["state", "category", "id", "cn", "en", "target", "target_official"]
-ACTION_HEADERS = ["+", "-"]
+ACTION_HEADERS = ["✓", "×"]
 _EMPTY_MODEL_INDEX = QModelIndex()
 STATE_COLORS = {
     "new": QColor("#8a7420"),
@@ -20,6 +20,7 @@ STATE_COLORS = {
     "approved": QColor("#2d6b3c"),
     "rejected": QColor("#6b2d2d"),
     "official": QColor("#3f3f3f"),
+    "official_match": QColor("#5b4a8f"),
     "untranslated": QColor("#555555"),
     "notranslate": QColor("#4a4a4a"),
     "ours": QColor("#8a7420"),
@@ -148,7 +149,8 @@ class StringsRepository:
         key = (row_id or "").lower()
         current_hash = cn_hash(cn_text or "")
         master_item = self.master_overlay.get(key)
-        mine_item = self.mine_overlay.get(key)
+        mine_raw = self.mine_overlay.get(key)
+        mine_item = mine_raw if is_mine_layer_active(mine_raw) else None
 
         target_master = master_item.get("target", "") if master_item else ""
 
@@ -161,9 +163,16 @@ class StringsRepository:
             mine_state = mine_item.get("state", "ours")
             if mine_state in ("approved", "notranslate", "rejected"):
                 return (mine_state, target_mine, target_master)
+            official_clean = (target_official or "").strip()
+            mine_clean = (target_mine or "").strip()
+            master_clean = (target_master or "").strip()
+            if master_item and mine_clean == master_clean:
+                return ("approved", target_mine, target_master)
+            if mine_clean and mine_clean == official_clean and mine_clean != master_clean:
+                return ("official_match", target_mine, target_master)
             if not master_item:
                 return ("new", target_mine, "")
-            if target_mine.strip() != target_master.strip():
+            if mine_clean != master_clean:
                 return ("changed", target_mine, target_master)
             return ("ours", target_mine, target_master)
 
@@ -258,6 +267,7 @@ class StringsRepository:
             "new",
             "master",
             "ours",
+            "official_match",
         }
         if not needle and q.state == "new" and not self.mine_overlay:
             return []
@@ -346,6 +356,7 @@ class StringsRepository:
             "new",
             "master",
             "ours",
+            "official_match",
         }
         return bool(q.search) or q.sort_by in ("state", "target") or (q.state in overlay_states)
 
@@ -561,6 +572,13 @@ class StringsTableModel(QAbstractTableModel):
         col = HEADERS[column - len(ACTION_HEADERS)]
         if role == Qt.ItemDataRole.DisplayRole:
             return row[col]
+        if role == Qt.ItemDataRole.ToolTipRole and col == "state":
+            if row[col] == "official_match":
+                return "My translation matches official target but differs from master."
+            if row[col] == "approved":
+                return "Approved for master merge."
+            if row[col] == "rejected":
+                return "Rejected from master merge."
         if role == Qt.ItemDataRole.BackgroundRole:
             return STATE_COLORS.get(row["state"], None)
         return None
@@ -592,6 +610,34 @@ class StringsTableModel(QAbstractTableModel):
         if row is None:
             return None
         return str(row["id"])
+
+    def visible_row_ids(self) -> list[str]:
+        ids: list[str] = []
+        for idx in range(self.total):
+            row_id = self.row_id(idx)
+            if row_id:
+                ids.append(row_id)
+        return ids
+
+    def index_of(self, row_id: str) -> int | None:
+        key = (row_id or "").lower()
+        if not key:
+            return None
+        for page, chunk in self.cache.items():
+            for rel, item in enumerate(chunk):
+                if (item.get("id") or "").lower() == key:
+                    return page * self.page_size + rel
+        if self.repo._use_materialized_ids(self.q):
+            ids = self.repo._get_search_ids(self.q)
+            try:
+                return ids.index(key)
+            except ValueError:
+                return None
+        for idx in range(self.total):
+            candidate = self.row_id(idx)
+            if (candidate or "").lower() == key:
+                return idx
+        return None
 
     def refresh_row(self, row_index: int) -> None:
         if row_index < 0 or row_index >= self.total:

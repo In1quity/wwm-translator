@@ -9,7 +9,10 @@ except ImportError:  # pragma: no cover
     fuzz = None
 
 
-def rebuild_tm(conn: sqlite3.Connection) -> dict[str, int]:
+def rebuild_tm(
+    conn: sqlite3.Connection,
+    master_overlay: dict[str, dict[str, str]] | None = None,
+) -> dict[str, int]:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS tm (
@@ -30,6 +33,27 @@ def rebuild_tm(conn: sqlite3.Connection) -> dict[str, int]:
         GROUP BY cn, target_official
         """
     )
+    master_pairs = 0
+    if master_overlay:
+        for row_id, item in master_overlay.items():
+            target = (item.get("target", "") or "").strip()
+            if not target:
+                continue
+            row = conn.execute("SELECT cn FROM strings WHERE id = ?", (row_id,)).fetchone()
+            if row is None:
+                continue
+            cn_text = (row["cn"] or "").strip()
+            if not cn_text:
+                continue
+            conn.execute(
+                """
+                INSERT INTO tm(cn, target, hits)
+                VALUES(?, ?, 100000)
+                ON CONFLICT(cn, target) DO UPDATE SET hits = hits + 100000
+                """,
+                (cn_text, target),
+            )
+            master_pairs += 1
     conn.commit()
     pairs = int(conn.execute("SELECT COUNT(*) FROM tm").fetchone()[0])
     rows = int(
@@ -37,7 +61,7 @@ def rebuild_tm(conn: sqlite3.Connection) -> dict[str, int]:
             "SELECT COUNT(*) FROM strings WHERE length(cn) > 0 AND length(target_official) > 0"
         ).fetchone()[0]
     )
-    return {"pairs": pairs, "rows": rows}
+    return {"pairs": pairs, "rows": rows, "master_pairs": master_pairs}
 
 
 def exact_candidates(conn: sqlite3.Connection, cn_text: str, limit: int = 20) -> list[sqlite3.Row]:

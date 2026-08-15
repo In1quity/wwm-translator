@@ -6,7 +6,16 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QModelIndex, QObject, QRegularExpression, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QKeySequence,
+    QPainter,
+    QShortcut,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -19,12 +28,17 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMainWindow,
+    QMenuBar,
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QRadioButton,
     QSplitter,
+    QStyle,
+    QStyledItemDelegate,
     QTableView,
     QTabWidget,
+    QTextBrowser,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -49,11 +63,17 @@ from ..project import (
     load_recent_projects,
     open_project,
 )
-from ..qa import run_qa
+from ..qa import check_row_into_db, run_qa, run_qa_on_map
 from ..tm import rebuild_tm
 from ..version import detect_client_version
 from .models import QueryState, StringsRepository, StringsTableModel
-from .panels import fill_glossary_panel, fill_preview_panel, fill_qa_panel, fill_tm_panel
+from .panels import (
+    fill_glossary_panel,
+    fill_qa_panel,
+    fill_same_source_panel,
+    fill_tm_panel,
+    render_preview_html,
+)
 
 
 class TagHighlighter(QSyntaxHighlighter):
@@ -81,6 +101,35 @@ class TagHighlighter(QSyntaxHighlighter):
             while it.hasNext():
                 m = it.next()
                 self.setFormat(m.capturedStart(), m.capturedLength(), fmt)
+
+
+class ActionCellDelegate(QStyledItemDelegate):
+    def paint(self, painter: QPainter, option, index) -> None:  # noqa: D401
+        bg = index.data(Qt.ItemDataRole.BackgroundRole)
+        if bg is not None:
+            painter.fillRect(option.rect, bg)
+
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        is_active = str(index.data(Qt.ItemDataRole.ForegroundRole).name()) == QColor("#f0f0f0").name()
+        hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        pressed = bool(option.state & QStyle.StateFlag.State_Sunken)
+        if is_active:
+            fill = QColor("#355d3f")
+        else:
+            fill = QColor("#2f2f2f")
+        if hover:
+            fill = fill.lighter(125)
+        if pressed:
+            fill = fill.darker(125)
+        button_rect = option.rect.adjusted(6, 4, -6, -4)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QColor("#555555"))
+        painter.setBrush(fill)
+        painter.drawRoundedRect(button_rect, 5, 5)
+        painter.setPen(QColor("#f0f0f0") if is_active else QColor("#b5b5b5"))
+        painter.drawText(button_rect, int(Qt.AlignmentFlag.AlignCenter), text)
+        painter.restore()
 
 
 class ProjectOpenWorker(QObject):
@@ -172,6 +221,15 @@ class MainWindow(QMainWindow):
         self.mine_rows: dict[str, dict[str, str]] = {}
         self.master_overlay_path: Path | None = None
         self.current_id: str | None = None
+        self._target_baseline = ""
+        self._notes_baseline = ""
+        self._current_cn = ""
+        self._current_en = ""
+        self._current_official = ""
+        self._preview_row_ids: dict[int, str] = {}
+        self._render_preview_source = "ours"
+        self._pending_export_overlay: dict[str, dict[str, str]] = {}
+        self._loading_row = False
         self._project_thread: QThread | None = None
         self._project_worker: ProjectOpenWorker | None = None
         self._project_progress: QProgressDialog | None = None
@@ -183,6 +241,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("WWM Translator")
         self.resize(1800, 1000)
         self._build_ui()
+        self._setup_shortcuts()
         self._disable_editor()
 
         if game_root and target_lang:
@@ -218,6 +277,7 @@ class MainWindow(QMainWindow):
         )
         root = QWidget()
         layout = QVBoxLayout(root)
+        self._build_menu()
         layout.addLayout(self._toolbar())
 
         self.base_warning = QLabel("")
@@ -239,6 +299,10 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setSortIndicatorShown(True)
         self.table.sortByColumn(4, Qt.SortOrder.AscendingOrder)
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
+        self.table.setMouseTracking(True)
+        self.table.setItemDelegateForColumn(0, ActionCellDelegate(self.table))
+        self.table.setItemDelegateForColumn(1, ActionCellDelegate(self.table))
         self.table.clicked.connect(self._on_row)
         editor_splitter.addWidget(self.table)
 
@@ -278,9 +342,12 @@ class MainWindow(QMainWindow):
         btn_save_master.clicked.connect(self._save_master_translation)
         btn_apply = QPushButton("Apply to same source text")
         btn_apply.clicked.connect(self._apply_same_cn)
+        self.btn_needs_context = QCheckBox("Needs Context")
+        self.btn_needs_context.stateChanged.connect(self._toggle_needs_context)
         row_buttons.addWidget(btn_save)
         row_buttons.addWidget(btn_save_master)
         row_buttons.addWidget(btn_apply)
+        row_buttons.addWidget(self.btn_needs_context)
         editor_layout.addLayout(row_buttons)
         editor_splitter.addWidget(editor_box)
         editor_splitter.setSizes([760, 320])
@@ -292,11 +359,30 @@ class MainWindow(QMainWindow):
         self.tm_list = QListWidget()
         self.glossary_list = QListWidget()
         self.qa_list = QListWidget()
-        self.preview_list = QListWidget()
+        self.same_source_list = QListWidget()
+        self.same_source_list.itemClicked.connect(self._on_same_source_click)
+        self.rendered_preview = QTextBrowser()
+        self.render_preview_ours = QRadioButton("Our Translation")
+        self.render_preview_official = QRadioButton("Official Target")
+        self.render_preview_ours.setChecked(True)
+        self.render_preview_ours.toggled.connect(self._refresh_rendered_preview)
+        self.render_preview_official.toggled.connect(self._refresh_rendered_preview)
+        rendered_tab = QWidget()
+        rendered_layout = QVBoxLayout(rendered_tab)
+        rendered_switch = QHBoxLayout()
+        rendered_switch.addWidget(self.render_preview_ours)
+        rendered_switch.addWidget(self.render_preview_official)
+        rendered_layout.addLayout(rendered_switch)
+        rendered_layout.addWidget(self.rendered_preview, 1)
+
+        self.notes_tab = QTextEdit()
+        self.notes_tab.setPlaceholderText("Row notes")
         self.tabs.addTab(self.tm_list, "TM")
         self.tabs.addTab(self.glossary_list, "Glossary")
         self.tabs.addTab(self.qa_list, "QA")
-        self.tabs.addTab(self.preview_list, "Preview")
+        self.tabs.addTab(self.same_source_list, "Same Source")
+        self.tabs.addTab(rendered_tab, "Rendered Preview")
+        self.tabs.addTab(self.notes_tab, "Notes")
         right_l.addWidget(self.tabs, 1)
         splitter.addWidget(right)
         splitter.setSizes([1300, 500])
@@ -310,6 +396,46 @@ class MainWindow(QMainWindow):
         else:
             editor.setProperty("editableField", True)
         editor._tag_highlighter = TagHighlighter(editor.document())
+
+    def _build_menu(self) -> None:
+        menu_bar: QMenuBar = self.menuBar()
+        project_menu = menu_bar.addMenu("Project")
+        translation_menu = menu_bar.addMenu("Translation")
+        tools_menu = menu_bar.addMenu("Tools")
+        export_menu = menu_bar.addMenu("Export")
+
+        action_create_db = QAction("Create DB", self)
+        action_create_db.triggered.connect(self._open_project_dialog)
+        action_load_master = QAction("Load master translation", self)
+        action_load_master.triggered.connect(self._load_master_overlay)
+        action_load_mine = QAction("Load my translation", self)
+        action_load_mine.triggered.connect(self._load_my_translation)
+        action_load_glossary = QAction("Load glossary", self)
+        action_load_glossary.triggered.connect(self._load_glossary)
+
+        action_save_translation = QAction("Save translation", self)
+        action_save_translation.triggered.connect(self._save_translations)
+        action_save_master = QAction("Save master translation", self)
+        action_save_master.triggered.connect(self._save_master_translation)
+
+        action_run_qa = QAction("Run QA", self)
+        action_run_qa.triggered.connect(self._run_qa)
+        action_rebuild_tm = QAction("Rebuild translation memory", self)
+        action_rebuild_tm.triggered.connect(self._rebuild_tm)
+
+        action_export = QAction("Export translation", self)
+        action_export.triggered.connect(self._export_release)
+
+        project_menu.addActions([action_create_db, action_load_master, action_load_mine, action_load_glossary])
+        translation_menu.addActions([action_save_translation, action_save_master])
+        tools_menu.addActions([action_run_qa, action_rebuild_tm])
+        export_menu.addAction(action_export)
+
+    def _setup_shortcuts(self) -> None:
+        QShortcut(QKeySequence("Ctrl+S"), self, activated=self._save_translations)
+        QShortcut(QKeySequence("Ctrl+Shift+A"), self, activated=self._approve_current_row)
+        QShortcut(QKeySequence("Ctrl+Shift+R"), self, activated=self._reject_current_row)
+        QShortcut(QKeySequence("Ctrl+Shift+C"), self, activated=self._toggle_needs_context_shortcut)
 
     def _toolbar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
@@ -326,6 +452,7 @@ class MainWindow(QMainWindow):
                 "untranslated",
                 "outdated",
                 "official",
+                "official_match",
             ]
         )
         self.state_filter.currentTextChanged.connect(self._apply_filters)
@@ -340,38 +467,15 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.category_filter)
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("FTS5 query")
+        self.search.setPlaceholderText("Search")
         self.search.returnPressed.connect(self._apply_filters)
         bar.addWidget(self.search, 1)
 
         self.issues_only = QCheckBox("Issues")
         self.issues_only.stateChanged.connect(self._apply_filters)
         bar.addWidget(self.issues_only)
-
-        btn_open_project = QPushButton("Create DB")
-        btn_open_project.clicked.connect(self._open_project_dialog)
-        btn_load_master = QPushButton("Load master translation")
-        btn_load_master.clicked.connect(self._load_master_overlay)
-        btn_load_mine = QPushButton("Load my translation")
-        btn_load_mine.clicked.connect(self._load_my_translation)
-        btn_load_glossary = QPushButton("Load glossary")
-        btn_load_glossary.clicked.connect(self._load_glossary)
-        btn_export = QPushButton("Export translation")
-        btn_export.clicked.connect(self._export_release)
-        btn_qa = QPushButton("Run QA")
-        btn_qa.clicked.connect(self._run_qa)
-        btn_tm = QPushButton("Rebuild translation memory")
-        btn_tm.clicked.connect(self._rebuild_tm)
-        for button in (
-            btn_open_project,
-            btn_load_master,
-            btn_load_mine,
-            btn_load_glossary,
-            btn_export,
-            btn_qa,
-            btn_tm,
-        ):
-            bar.addWidget(button)
+        self.row_counter = QLabel("Rows: 0")
+        bar.addWidget(self.row_counter)
         return bar
 
     def _apply_filters(self) -> None:
@@ -385,6 +489,13 @@ class MainWindow(QMainWindow):
                 search=self.search.text().strip(),
             )
         )
+        self._update_row_counter()
+
+    def _update_row_counter(self) -> None:
+        if self.model is None:
+            self.row_counter.setText("Rows: 0")
+            return
+        self.row_counter.setText(f"Rows: {self.model.rowCount()}")
 
     def _persist_current_row(self) -> bool:
         if not self.current_id or self.repo is None:
@@ -393,24 +504,41 @@ class MainWindow(QMainWindow):
         if row is None:
             return False
         key = self.current_id.lower()
-        existing = self.mine_rows.get(key)
         target_text = self.target.toPlainText()
-        state = "ours"
-        if existing is not None:
-            previous_target = existing.get("target", "")
-            if previous_target == target_text:
-                state = existing.get("state", "ours")
+        notes_text = self.notes_tab.toPlainText()
+        needs_context = "1" if self.btn_needs_context.isChecked() else "0"
+        existing = self.mine_rows.get(key, {})
+        old_snapshot = dict(existing)
+
+        target_changed = target_text != self._target_baseline
+        notes_changed = notes_text != self._notes_baseline
+        needs_changed = (existing.get("needs_context", "0") == "1") != (needs_context == "1")
+        if not target_changed and not notes_changed and not needs_changed:
+            return False
+
+        state = existing.get("state", "ours")
+        if target_changed and state in {"approved", "rejected"}:
+            state = "ours"
+
         self.mine_rows[key] = {
             "cn_hash": cn_hash(row["cn"]),
             "state": state,
             "target": target_text,
             "cn": row["cn"],
             "en": row["en"],
+            "needs_context": needs_context,
+            "notes": notes_text,
         }
         self._sync_repo_overlays(reload_model=False)
         if self.model is not None:
             self.model.refresh_row_by_id(key)
-        return True
+        changed = self.mine_rows.get(key, {}) != old_snapshot
+        if changed and self.conn is not None and self.project is not None:
+            check_row_into_db(self.conn, row["id"], self._effective_overlay(), self.project.target_lang)
+        self._target_baseline = target_text
+        self._notes_baseline = notes_text
+        self._refresh_rendered_preview()
+        return changed
 
     def _on_row(self, index: QModelIndex | None = None) -> None:
         if self.model is None or self.repo is None:
@@ -422,10 +550,10 @@ class MainWindow(QMainWindow):
         if not row_id:
             return
         if idx.column() == 0:
-            self._mark_row(row_id, "approved", idx.row())
+            self._mark_rows_from_selection("approved", fallback_row_id=row_id, fallback_row=idx.row())
             return
         if idx.column() == 1:
-            self._mark_row(row_id, "rejected", idx.row())
+            self._mark_rows_from_selection("rejected", fallback_row_id=row_id, fallback_row=idx.row())
             return
         if self.current_id and self.current_id != row_id:
             self._persist_current_row()
@@ -436,36 +564,59 @@ class MainWindow(QMainWindow):
         self._refresh_panels(row_id, row["cn"], row["en"])
 
     def _fill_editor_row(self, row_id: str, row: dict[str, str]) -> None:
+        self._loading_row = True
         self.current_id = row_id
         self.cn.setPlainText(row["cn"])
         self.en.setPlainText(row["en"])
         self.target_official.setPlainText(row["target_official"])
         self.target_master.setPlainText(row.get("target_master", ""))
         self.target.setPlainText(row["target"])
+        mine_item = self.mine_rows.get((row_id or "").lower(), {})
+        self.btn_needs_context.setChecked(mine_item.get("needs_context", "0") == "1")
+        self.notes_tab.setPlainText(mine_item.get("notes", ""))
+        self._target_baseline = row["target"]
+        self._notes_baseline = mine_item.get("notes", "")
+        self._current_cn = row["cn"]
+        self._current_en = row["en"]
+        self._current_official = row["target_official"]
+        self._loading_row = False
+        self._refresh_rendered_preview()
 
     def _mark_row(self, row_id: str, next_state: str, row_index: int) -> None:
         if self.repo is None or self.model is None:
             return
-        if self.current_id and self.current_id != row_id:
+        if self.current_id:
             self._persist_current_row()
         row = self.repo.get_row(row_id)
         if row is None:
             return
         key = row_id.lower()
         current = self.mine_rows.get(key)
+        if (
+            next_state in {"approved", "rejected"}
+            and not (row.get("target_master", "") or "").strip()
+            and not (row.get("target", "") or "").strip()
+        ):
+            return
         toggled_state = "ours"
         if current is None or current.get("state", "ours") != next_state:
             toggled_state = next_state
         if current:
             target_text = current.get("target", row.get("target", ""))
+            notes_text = current.get("notes", "")
+            needs_context = current.get("needs_context", "0")
         else:
             target_text = row.get("target", "")
+            notes_text = ""
+            needs_context = "0"
         self.mine_rows[key] = {
             "cn_hash": cn_hash(row["cn"]),
             "state": toggled_state,
             "target": target_text,
             "cn": row["cn"],
             "en": row["en"],
+            "notes": notes_text,
+            "needs_context": needs_context,
         }
         self._sync_repo_overlays(reload_model=False)
         self.model.refresh_row(row_index)
@@ -475,27 +626,147 @@ class MainWindow(QMainWindow):
         self._fill_editor_row(row_id, latest)
         self._refresh_panels(row_id, latest["cn"], latest["en"])
 
+    def _selected_rows(self) -> list[tuple[str, int]]:
+        if self.model is None:
+            return []
+        indexes = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []
+        out: list[tuple[str, int]] = []
+        for idx in indexes:
+            row_id = self.model.row_id(idx.row())
+            if row_id:
+                out.append((row_id, idx.row()))
+        return out
+
+    def _mark_rows_from_selection(self, next_state: str, fallback_row_id: str, fallback_row: int) -> None:
+        selected = self._selected_rows()
+        if not selected:
+            selected = [(fallback_row_id, fallback_row)]
+        if len(selected) == 1:
+            row_id, row_index = selected[0]
+            self._mark_row(row_id, next_state, row_index)
+            return
+
+        if self.repo is None:
+            return
+        self._persist_current_row()
+        actionable = 0
+        for row_id, _row_index in selected:
+            row = self.repo.get_row(row_id)
+            if row is None:
+                continue
+            if not (row.get("target", "") or "").strip() and not (row.get("target_master", "") or "").strip():
+                continue
+            actionable += 1
+        if actionable <= 0:
+            QMessageBox.information(self, "Review", "No rows eligible for this action.")
+            return
+        reply = QMessageBox.question(
+            self,
+            "Confirm bulk review",
+            f"Apply '{next_state}' to {actionable} visible selected rows?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        for row_id, row_index in selected:
+            row = self.repo.get_row(row_id)
+            if row is None:
+                continue
+            if not (row.get("target", "") or "").strip() and not (row.get("target_master", "") or "").strip():
+                continue
+            self._mark_row(row_id, next_state, row_index)
+
     def _refresh_panels(self, row_id: str, cn_text: str, en_text: str) -> None:
         if self.conn is None:
             return
         self.tm_list.clear()
-        for item in fill_tm_panel(self.conn, cn_text):
+        for item in fill_tm_panel(
+            self.conn,
+            cn_text,
+            self.master_overlay_rows,
+            self.mine_rows,
+            row_id,
+        ):
             self.tm_list.addItem(item)
         self.glossary_list.clear()
-        for item in fill_glossary_panel(self.conn, cn_text, en_text):
+        for item in fill_glossary_panel(self.conn, cn_text, en_text, self.target.toPlainText()):
             self.glossary_list.addItem(item)
         self.qa_list.clear()
         for item in fill_qa_panel(self.conn, row_id):
             self.qa_list.addItem(item)
-        self.preview_list.clear()
-        for item in fill_preview_panel(self.conn, row_id):
-            self.preview_list.addItem(item)
+        self.same_source_list.clear()
+        self._preview_row_ids.clear()
+        for index, (item, preview_row_id) in enumerate(fill_same_source_panel(self.conn, row_id)):
+            self.same_source_list.addItem(item)
+            self._preview_row_ids[index] = preview_row_id
+
+    def _refresh_rendered_preview(self) -> None:
+        if self.current_id is None:
+            self.rendered_preview.setHtml("")
+            return
+        source_text = self.target.toPlainText()
+        self._render_preview_source = "ours"
+        if self.render_preview_official.isChecked():
+            source_text = self.target_official.toPlainText()
+            self._render_preview_source = "official"
+        html, warnings = render_preview_html(source_text)
+        if warnings:
+            warning_html = "<br/>".join(f"[warning] {msg}" for msg in warnings)
+            html = html.replace("</body>", f"<hr/><div>{warning_html}</div></body>")
+        self.rendered_preview.setHtml(html)
+
+    def _on_same_source_click(self, item) -> None:
+        if self.model is None:
+            return
+        row_index = self.same_source_list.row(item)
+        target_row_id = self._preview_row_ids.get(row_index)
+        if not target_row_id:
+            return
+        model_index = self.model.index_of(target_row_id)
+        if model_index is None:
+            QMessageBox.information(
+                self,
+                "Same Source",
+                "Selected row is filtered out by current filters/search.",
+            )
+            return
+        idx = self.model.index(model_index, 2)
+        self.table.selectRow(model_index)
+        self.table.scrollTo(idx)
+        self._on_row(idx)
+
+    def _approve_current_row(self) -> None:
+        if self.current_id is None or self.model is None:
+            return
+        model_index = self.model.index_of(self.current_id)
+        if model_index is None:
+            return
+        self._mark_row(self.current_id, "approved", model_index)
+
+    def _reject_current_row(self) -> None:
+        if self.current_id is None or self.model is None:
+            return
+        model_index = self.model.index_of(self.current_id)
+        if model_index is None:
+            return
+        self._mark_row(self.current_id, "rejected", model_index)
+
+    def _toggle_needs_context(self, _state: int) -> None:
+        if not self.current_id or self._loading_row:
+            return
+        self._persist_current_row()
+
+    def _toggle_needs_context_shortcut(self) -> None:
+        self.btn_needs_context.setChecked(not self.btn_needs_context.isChecked())
 
     def _save_translations(self) -> None:
         if self.project is None:
             return
         self._persist_current_row()
         result = save_translation_rows(self.project.my_translation_path, self.mine_rows)
+        if self.current_id:
+            self._on_row()
         QMessageBox.information(self, "Translation", f"Saved rows: {result['rows']}")
 
     def _save_master_translation(self) -> None:
@@ -517,6 +788,8 @@ class MainWindow(QMainWindow):
         self.master_overlay_path = output_path
         self.master_overlay_rows = merged
         self._sync_repo_overlays(reload_model=True)
+        if self.current_id:
+            self._on_row()
         QMessageBox.information(
             self,
             "Master translation",
@@ -530,27 +803,61 @@ class MainWindow(QMainWindow):
     def _apply_same_cn(self) -> None:
         if not self.current_id or self.repo is None or self.conn is None or self.project is None:
             return
+        self._persist_current_row()
         row = self.repo.get_row(self.current_id)
         if row is None:
             return
         updated = 0
+        unchanged = 0
+        auto_approved = 0
+        official_match = 0
         target_text = self.target.toPlainText()
         target_cn = row["cn"]
         batch = self.conn.execute(
-            "SELECT id, cn, en FROM strings WHERE cn = ?", (target_cn,)
+            "SELECT id, cn, en, target_official FROM strings WHERE cn = ?", (target_cn,)
         ).fetchall()
         for item in batch:
-            row_id = item["id"]
+            row_id = (item["id"] or "").lower()
+            current = self.mine_rows.get(row_id, {})
+            current_target = current.get("target", "")
+            if current_target == target_text:
+                unchanged += 1
+                continue
+            state = current.get("state", "ours")
+            if state in {"approved", "rejected"}:
+                state = "ours"
+            master_target = self.master_overlay_rows.get(row_id, {}).get("target", "")
+            if target_text.strip() and target_text.strip() == (master_target or "").strip():
+                state = "approved"
+                auto_approved += 1
+            elif (
+                target_text.strip()
+                and target_text.strip() == (item["target_official"] or "").strip()
+                and target_text.strip() != (master_target or "").strip()
+            ):
+                official_match += 1
             self.mine_rows[row_id] = {
                 "cn_hash": cn_hash(item["cn"] or ""),
-                "state": "ours",
+                "state": state,
                 "target": target_text,
                 "cn": item["cn"] or "",
                 "en": item["en"] or "",
+                "needs_context": current.get("needs_context", "0"),
+                "notes": current.get("notes", ""),
             }
             updated += 1
         self._sync_repo_overlays(reload_model=True)
-        QMessageBox.information(self, "Propagate", f"Updated rows: {updated}")
+        self._on_row()
+        QMessageBox.information(
+            self,
+            "Propagate",
+            (
+                f"Updated: {updated}\n"
+                f"Unchanged: {unchanged}\n"
+                f"Auto-approved: {auto_approved}\n"
+                f"Official match: {official_match}"
+            ),
+        )
 
     def _load_master_overlay(self) -> None:
         if self.project is None:
@@ -564,6 +871,8 @@ class MainWindow(QMainWindow):
         self.master_overlay_path = Path(path)
         self.master_overlay_rows = load_overlay(self.master_overlay_path)
         self._sync_repo_overlays(reload_model=True)
+        if self.current_id:
+            self._on_row()
         QMessageBox.information(
             self, "Master translation", f"Loaded rows: {len(self.master_overlay_rows)}"
         )
@@ -579,6 +888,8 @@ class MainWindow(QMainWindow):
             return
         self.mine_rows = load_translation_rows(Path(path))
         self._sync_repo_overlays(reload_model=True)
+        if self.current_id:
+            self._on_row()
         QMessageBox.information(self, "My translation", f"Loaded rows: {len(self.mine_rows)}")
 
     def _run_qa(self) -> None:
@@ -593,11 +904,19 @@ class MainWindow(QMainWindow):
         if self.conn is None:
             return
         try:
-            result = rebuild_tm(self.conn)
+            result = rebuild_tm(self.conn, self.master_overlay_rows)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "TM rebuild failed", str(exc))
             return
-        QMessageBox.information(self, "TM", f"Pairs: {result['pairs']}\nRows: {result['rows']}")
+        QMessageBox.information(
+            self,
+            "TM",
+            (
+                f"Pairs: {result['pairs']}\n"
+                f"Rows: {result['rows']}\n"
+                f"Master trusted pairs: {result.get('master_pairs', 0)}"
+            ),
+        )
 
     def _load_glossary(self) -> None:
         if self.project is None:
@@ -620,12 +939,17 @@ class MainWindow(QMainWindow):
                 "cn_hash": item.get("cn_hash", ""),
                 "state": item.get("state", "ours"),
                 "target": item.get("target", ""),
+                "notes": item.get("notes", ""),
+                "needs_context": item.get("needs_context", "0"),
+                "cn": item.get("cn", ""),
+                "en": item.get("en", ""),
             }
             for row_id, item in self.mine_rows.items()
         }
         self.repo.set_overlays(self.master_overlay_rows, mine_overlay)
         if reload_model and self.model is not None:
             self.model.reload()
+        self._update_row_counter()
 
     def _refresh_base_warning(self) -> None:
         if self.project is None:
@@ -736,6 +1060,7 @@ class MainWindow(QMainWindow):
         self._sync_repo_overlays(reload_model=False)
         self._enable_editor()
         self._refresh_base_warning()
+        self._update_row_counter()
         self.setWindowTitle(f"WWM Translator | {project.game_root.name} | {project.target_lang}")
 
     def _cleanup_project_loader(self) -> None:
@@ -766,9 +1091,15 @@ class MainWindow(QMainWindow):
         return out
 
     def _effective_export_overlay(self) -> dict[str, dict[str, str]]:
-        # Keep export behavior aligned with "Save master translation":
-        # use current master rows plus only user-approved rows.
-        return merge_master_rows(self.master_overlay_rows, self.mine_rows)
+        # Final export uses only official target + saved master overrides.
+        return {
+            row_id: {
+                "cn_hash": item.get("cn_hash", ""),
+                "state": item.get("state", "ours"),
+                "target": item.get("target", ""),
+            }
+            for row_id, item in self.master_overlay_rows.items()
+        }
 
     def _export_release(self) -> None:
         if self.project is None:
@@ -779,6 +1110,46 @@ class MainWindow(QMainWindow):
         self._persist_current_row()
         output_dir = Path(sys.executable).resolve().parent / "export"
         overlay_rows = self._effective_export_overlay()
+        self._pending_export_overlay = overlay_rows
+
+        if self.conn is None:
+            return
+        final_map, stats = self._build_final_export_map(overlay_rows)
+        qa_result = run_qa_on_map(self.conn, final_map, self.project.target_lang)
+        if int(qa_result.get("critical", 0)) > 0:
+            critical_items = qa_result.get("critical_items", [])
+            preview = "\n".join(
+                f"{row_id} | {rule} | {detail}" for row_id, rule, _severity, detail in critical_items[:20]
+            )
+            reply = QMessageBox.question(
+                self,
+                "Critical QA issues before export",
+                (
+                    f"Critical issues: {qa_result['critical']}\n"
+                    "Top issues:\n"
+                    f"{preview}\n\n"
+                    "Export anyway?"
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        unsaved_approved = [
+            row_id
+            for row_id, item in self.mine_rows.items()
+            if item.get("state", "") == "approved" and row_id not in overlay_rows
+        ]
+        if unsaved_approved:
+            QMessageBox.information(
+                self,
+                "Export warning",
+                (
+                    f"Approved but not yet saved to master: {len(unsaved_approved)}\n"
+                    "Use Save master translation to include them in export."
+                ),
+            )
         self._export_output_dir = output_dir
 
         self._export_progress = QProgressDialog("Exporting translation...", "", 0, 0, self)
@@ -800,6 +1171,37 @@ class MainWindow(QMainWindow):
         self._export_thread.finished.connect(self._cleanup_export_loader)
         self._export_thread.start()
 
+    def _build_final_export_map(
+        self,
+        overlay_rows: dict[str, dict[str, str]],
+    ) -> tuple[dict[str, str], dict[str, int]]:
+        if self.conn is None:
+            return {}, {"rows": 0, "official": 0, "master": 0, "empty": 0}
+        rows = self.conn.execute("SELECT id, target_official FROM strings").fetchall()
+        final_map: dict[str, str] = {}
+        official_count = 0
+        master_count = 0
+        empty_count = 0
+        for row in rows:
+            row_id = (row["id"] or "").lower()
+            master_target = (overlay_rows.get(row_id, {}).get("target", "") or "").strip()
+            official_target = (row["target_official"] or "").strip()
+            if master_target:
+                final_map[row_id] = master_target
+                master_count += 1
+            elif official_target:
+                final_map[row_id] = official_target
+                official_count += 1
+            else:
+                final_map[row_id] = ""
+                empty_count += 1
+        return final_map, {
+            "rows": len(rows),
+            "official": official_count,
+            "master": master_count,
+            "empty": empty_count,
+        }
+
     def _on_export_progress(self, message: str) -> None:
         if self._export_progress is not None:
             self._export_progress.setLabelText(message)
@@ -819,10 +1221,15 @@ class MainWindow(QMainWindow):
         built_files = result_obj.get("built_files", [])
         archive = result_obj.get("zip", "")
         built_count = len(built_files) if isinstance(built_files, list) else 0
+        _final_map, stats = self._build_final_export_map(self._pending_export_overlay)
         message = (
             f"Built files: {built_count}\n"
             f"Archive: {archive}\n"
-            f"Output: {output_dir}"
+            f"Output: {output_dir}\n"
+            f"Rows total: {stats['rows']}\n"
+            f"From official: {stats['official']}\n"
+            f"Master overrides: {stats['master']}\n"
+            f"Empty rows: {stats['empty']}"
         )
         QMessageBox.information(self, "Export finished", message)
 
@@ -835,6 +1242,7 @@ class MainWindow(QMainWindow):
         self._export_thread = None
         self._export_progress = None
         self._export_output_dir = None
+        self._pending_export_overlay = {}
 
     def _disable_editor(self) -> None:
         self.table.setEnabled(False)
@@ -843,6 +1251,10 @@ class MainWindow(QMainWindow):
         self.target.setEnabled(False)
         self.target_master.setEnabled(False)
         self.target_official.setEnabled(False)
+        self.notes_tab.setEnabled(False)
+        self.btn_needs_context.setEnabled(False)
+        self.same_source_list.setEnabled(False)
+        self.rendered_preview.setEnabled(False)
 
     def _enable_editor(self) -> None:
         self.table.setEnabled(True)
@@ -851,6 +1263,10 @@ class MainWindow(QMainWindow):
         self.target.setEnabled(True)
         self.target_master.setEnabled(True)
         self.target_official.setEnabled(True)
+        self.notes_tab.setEnabled(True)
+        self.btn_needs_context.setEnabled(True)
+        self.same_source_list.setEnabled(True)
+        self.rendered_preview.setEnabled(True)
 
 
 def main() -> int:

@@ -20,7 +20,7 @@ flowchart TD
 - `project.py` — проектные пути и каталог данных.
 - `base.py` — распаковка и агрегация locale-контейнеров в `cn.tsv`, `en.tsv`, `target.tsv`.
 - `db.py` — схема БД `strings/tm/glossary/qa_issues` для целевого языка.
-- `gui/` — редактор, фильтры, TM, QA и preview.
+- `gui/` — редактор, фильтры, TM, QA, Same Source, Rendered Preview и Notes.
 - `build.py` — экспорт обновлённых locale-контейнеров и zip.
 
 ## Хранение данных
@@ -34,7 +34,8 @@ flowchart TD
 ## Слои перевода
 
 - `target_official` — официальный текст из файлов игры.
-- `master` — внешний TSV, загруженный кнопкой.
+- `master` — внешний TSV, загруженный из меню Project.
 - `mine` — локальные пользовательские правки в `my_translation.tsv`.
 
-Статусы (`new`, `master`, `changed`, `outdated`) вычисляются на основе `cn_hash` и сравнения слоёв.
+Статусы (`new`, `master`, `changed`, `outdated`, `approved`, `rejected`, `official_match`)
+вычисляются на основе `cn_hash`, review-меток и сравнения слоёв.
