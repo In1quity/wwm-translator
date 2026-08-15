@@ -110,7 +110,9 @@ class ActionCellDelegate(QStyledItemDelegate):
             painter.fillRect(option.rect, bg)
 
         text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        is_active = str(index.data(Qt.ItemDataRole.ForegroundRole).name()) == QColor("#f0f0f0").name()
+        fg = index.data(Qt.ItemDataRole.ForegroundRole)
+        fg_name = str(fg.name()) if fg is not None else ""
+        is_active = fg_name == QColor("#f0f0f0").name()
         hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
         pressed = bool(option.state & QStyle.StateFlag.State_Sunken)
         if is_active:
@@ -426,7 +428,14 @@ class MainWindow(QMainWindow):
         action_export = QAction("Export translation", self)
         action_export.triggered.connect(self._export_release)
 
-        project_menu.addActions([action_create_db, action_load_master, action_load_mine, action_load_glossary])
+        project_menu.addActions(
+            [
+                action_create_db,
+                action_load_master,
+                action_load_mine,
+                action_load_glossary,
+            ]
+        )
         translation_menu.addActions([action_save_translation, action_save_master])
         tools_menu.addActions([action_run_qa, action_rebuild_tm])
         export_menu.addAction(action_export)
@@ -534,7 +543,12 @@ class MainWindow(QMainWindow):
             self.model.refresh_row_by_id(key)
         changed = self.mine_rows.get(key, {}) != old_snapshot
         if changed and self.conn is not None and self.project is not None:
-            check_row_into_db(self.conn, row["id"], self._effective_overlay(), self.project.target_lang)
+            check_row_into_db(
+                self.conn,
+                row["id"],
+                self._effective_overlay(),
+                self.project.target_lang,
+            )
         self._target_baseline = target_text
         self._notes_baseline = notes_text
         self._refresh_rendered_preview()
@@ -550,10 +564,18 @@ class MainWindow(QMainWindow):
         if not row_id:
             return
         if idx.column() == 0:
-            self._mark_rows_from_selection("approved", fallback_row_id=row_id, fallback_row=idx.row())
+            self._mark_rows_from_selection(
+                "approved",
+                fallback_row_id=row_id,
+                fallback_row=idx.row(),
+            )
             return
         if idx.column() == 1:
-            self._mark_rows_from_selection("rejected", fallback_row_id=row_id, fallback_row=idx.row())
+            self._mark_rows_from_selection(
+                "rejected",
+                fallback_row_id=row_id,
+                fallback_row=idx.row(),
+            )
             return
         if self.current_id and self.current_id != row_id:
             self._persist_current_row()
@@ -637,7 +659,12 @@ class MainWindow(QMainWindow):
                 out.append((row_id, idx.row()))
         return out
 
-    def _mark_rows_from_selection(self, next_state: str, fallback_row_id: str, fallback_row: int) -> None:
+    def _mark_rows_from_selection(
+        self,
+        next_state: str,
+        fallback_row_id: str,
+        fallback_row: int,
+    ) -> None:
         selected = self._selected_rows()
         if not selected:
             selected = [(fallback_row_id, fallback_row)]
@@ -654,7 +681,9 @@ class MainWindow(QMainWindow):
             row = self.repo.get_row(row_id)
             if row is None:
                 continue
-            if not (row.get("target", "") or "").strip() and not (row.get("target_master", "") or "").strip():
+            has_target = (row.get("target", "") or "").strip()
+            has_master = (row.get("target_master", "") or "").strip()
+            if not has_target and not has_master:
                 continue
             actionable += 1
         if actionable <= 0:
@@ -673,7 +702,9 @@ class MainWindow(QMainWindow):
             row = self.repo.get_row(row_id)
             if row is None:
                 continue
-            if not (row.get("target", "") or "").strip() and not (row.get("target_master", "") or "").strip():
+            has_target = (row.get("target", "") or "").strip()
+            has_master = (row.get("target_master", "") or "").strip()
+            if not has_target and not has_master:
                 continue
             self._mark_row(row_id, next_state, row_index)
 
@@ -1119,7 +1150,8 @@ class MainWindow(QMainWindow):
         if int(qa_result.get("critical", 0)) > 0:
             critical_items = qa_result.get("critical_items", [])
             preview = "\n".join(
-                f"{row_id} | {rule} | {detail}" for row_id, rule, _severity, detail in critical_items[:20]
+                f"{row_id} | {rule} | {detail}"
+                for row_id, rule, _severity, detail in critical_items[:20]
             )
             reply = QMessageBox.question(
                 self,

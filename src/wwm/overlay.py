@@ -84,7 +84,9 @@ def load_translation_rows(path: Path) -> dict[str, dict[str, str]]:
                 "cn": cn or "",
                 "en": en or "",
                 "needs_context": (
-                    "1" if len(row) > 6 and str(row[6]).strip().lower() in ("1", "true", "yes") else "0"
+                    "1"
+                    if len(row) > 6 and str(row[6]).strip().lower() in ("1", "true", "yes")
+                    else "0"
                 ),
                 "notes": (row[7] if len(row) > 7 else "") or "",
             }

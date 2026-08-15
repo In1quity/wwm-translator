@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from ..tm import exact_candidates, fuzzy_candidates, preview_same_cn
 from ..render_preview import render_text_to_html
+from ..tm import exact_candidates, fuzzy_candidates, preview_same_cn
 
 
 def fill_tm_panel(
