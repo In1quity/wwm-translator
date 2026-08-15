@@ -53,6 +53,7 @@ from ..overlay import (
     load_overlay,
     load_translation_rows,
     merge_master_rows,
+    normalize_master_rows,
     save_overlay,
     save_translation_rows,
 )
@@ -69,6 +70,7 @@ from ..version import detect_client_version
 from .models import QueryState, StringsRepository, StringsTableModel
 from .panels import (
     fill_glossary_panel,
+    fill_qa_overview_panel,
     fill_qa_panel,
     fill_same_source_panel,
     fill_tm_panel,
@@ -258,6 +260,7 @@ class MainWindow(QMainWindow):
         self._pending_export_overlay: dict[str, dict[str, str]] = {}
         self._loading_row = False
         self._selection_snapshot: list[tuple[str, int]] = []
+        self._qa_issue_row_ids: dict[int, str] = {}
         self._project_thread: QThread | None = None
         self._project_worker: ProjectOpenWorker | None = None
         self._project_progress: QProgressDialog | None = None
@@ -388,9 +391,11 @@ class MainWindow(QMainWindow):
         right = QWidget()
         right_l = QVBoxLayout(right)
         self.tabs = QTabWidget()
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         self.tm_list = QListWidget()
         self.glossary_list = QListWidget()
         self.qa_list = QListWidget()
+        self.qa_list.itemClicked.connect(self._on_qa_item_click)
         self.same_source_list = QListWidget()
         self.same_source_list.itemClicked.connect(self._on_same_source_click)
         self.rendered_preview = QTextBrowser()
@@ -798,14 +803,36 @@ class MainWindow(QMainWindow):
         self.glossary_list.clear()
         for item in fill_glossary_panel(self.conn, cn_text, en_text, self.target.toPlainText()):
             self.glossary_list.addItem(item)
-        self.qa_list.clear()
-        for item in fill_qa_panel(self.conn, row_id):
-            self.qa_list.addItem(item)
+        self._fill_row_qa_panel(row_id)
         self.same_source_list.clear()
         self._preview_row_ids.clear()
         for index, (item, preview_row_id) in enumerate(fill_same_source_panel(self.conn, row_id)):
             self.same_source_list.addItem(item)
             self._preview_row_ids[index] = preview_row_id
+
+    def _fill_row_qa_panel(self, row_id: str) -> None:
+        self.qa_list.clear()
+        self._qa_issue_row_ids.clear()
+        for index, item in enumerate(fill_qa_panel(self.conn, row_id)):
+            self.qa_list.addItem(item)
+            self._qa_issue_row_ids[index] = row_id
+
+    def _show_qa_overview_panel(self) -> None:
+        if self.conn is None:
+            return
+        self.qa_list.clear()
+        self._qa_issue_row_ids.clear()
+        for index, (item, issue_row_id) in enumerate(fill_qa_overview_panel(self.conn, limit=3000)):
+            self.qa_list.addItem(item)
+            self._qa_issue_row_ids[index] = issue_row_id
+
+    def _has_row_selection(self) -> bool:
+        if self.model is None:
+            return False
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            return False
+        return selection_model.hasSelection()
 
     def _refresh_rendered_preview(self) -> None:
         if self.current_id is None:
@@ -841,6 +868,37 @@ class MainWindow(QMainWindow):
         self.table.selectRow(model_index)
         self.table.scrollTo(idx)
         self._on_row(idx)
+
+    def _on_qa_item_click(self, item) -> None:
+        if self.model is None:
+            return
+        row_index = self.qa_list.row(item)
+        target_row_id = self._qa_issue_row_ids.get(row_index)
+        if not target_row_id:
+            return
+        model_index = self.model.index_of(target_row_id)
+        if model_index is None:
+            QMessageBox.information(
+                self,
+                "QA",
+                "Issue row is filtered out by current filters/search.",
+            )
+            return
+        idx = self.model.index(model_index, 2)
+        self.table.selectRow(model_index)
+        self.table.scrollTo(idx)
+        self._on_row(idx)
+
+    def _on_tab_changed(self, tab_index: int) -> None:
+        qa_tab_index = self.tabs.indexOf(self.qa_list)
+        if tab_index != qa_tab_index:
+            return
+        if self.conn is None:
+            return
+        if self._has_row_selection() and self.current_id:
+            self._fill_row_qa_panel(self.current_id)
+            return
+        self._show_qa_overview_panel()
 
     def _approve_current_row(self) -> None:
         if self.current_id is None or self.model is None:
@@ -975,7 +1033,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         self.master_overlay_path = Path(path)
-        self.master_overlay_rows = load_overlay(self.master_overlay_path)
+        self.master_overlay_rows = normalize_master_rows(load_overlay(self.master_overlay_path))
         self._sync_repo_overlays(reload_model=True)
         if self.current_id:
             self._on_row()
@@ -1048,8 +1106,10 @@ class MainWindow(QMainWindow):
             "QA",
             f"Rows: {result_obj.get('rows', 0)}\nIssues: {result_obj.get('issues', 0)}",
         )
-        if self.current_id:
+        if self.current_id and self._has_row_selection():
             self._on_row()
+            return
+        self._show_qa_overview_panel()
 
     def _cleanup_qa_runner(self) -> None:
         if self._qa_worker is not None:
@@ -1274,19 +1334,30 @@ class MainWindow(QMainWindow):
 
         if self.conn is None:
             return
-        final_map, stats = self._build_final_export_map(overlay_rows)
-        qa_result = run_qa_on_map(self.conn, final_map, self.project.target_lang)
+        final_map, source_map, stats = self._build_final_export_map(overlay_rows)
+        qa_result = run_qa_on_map(
+            self.conn,
+            final_map,
+            self.project.target_lang,
+            source_map=source_map,
+        )
         if int(qa_result.get("critical", 0)) > 0:
             critical_items = qa_result.get("critical_items", [])
+            source_critical = {"master": 0, "official": 0, "empty": 0, "unknown": 0}
+            for _row_id, _rule, _severity, _detail, source in critical_items:
+                source_critical[source] = source_critical.get(source, 0) + 1
             preview = "\n".join(
-                f"{row_id} | {rule} | {detail}"
-                for row_id, rule, _severity, detail in critical_items[:20]
+                f"{row_id} | {rule} | {detail} | source={source.upper()}"
+                for row_id, rule, _severity, detail, source in critical_items[:20]
             )
             reply = QMessageBox.question(
                 self,
                 "Critical QA issues before export",
                 (
                     f"Critical issues: {qa_result['critical']}\n"
+                    f"Master: {source_critical.get('master', 0)} | "
+                    f"Official: {source_critical.get('official', 0)} | "
+                    f"Empty: {source_critical.get('empty', 0)}\n"
                     "Top issues:\n"
                     f"{preview}\n\n"
                     "Export anyway?"
@@ -1335,11 +1406,12 @@ class MainWindow(QMainWindow):
     def _build_final_export_map(
         self,
         overlay_rows: dict[str, dict[str, str]],
-    ) -> tuple[dict[str, str], dict[str, int]]:
+    ) -> tuple[dict[str, str], dict[str, str], dict[str, int]]:
         if self.conn is None:
-            return {}, {"rows": 0, "official": 0, "master": 0, "empty": 0}
+            return {}, {}, {"rows": 0, "official": 0, "master": 0, "empty": 0}
         rows = self.conn.execute("SELECT id, target_official FROM strings").fetchall()
         final_map: dict[str, str] = {}
+        source_map: dict[str, str] = {}
         official_count = 0
         master_count = 0
         empty_count = 0
@@ -1349,14 +1421,17 @@ class MainWindow(QMainWindow):
             official_target = (row["target_official"] or "").strip()
             if master_target:
                 final_map[row_id] = master_target
+                source_map[row_id] = "master"
                 master_count += 1
             elif official_target:
                 final_map[row_id] = official_target
+                source_map[row_id] = "official"
                 official_count += 1
             else:
                 final_map[row_id] = ""
+                source_map[row_id] = "empty"
                 empty_count += 1
-        return final_map, {
+        return final_map, source_map, {
             "rows": len(rows),
             "official": official_count,
             "master": master_count,
@@ -1382,7 +1457,7 @@ class MainWindow(QMainWindow):
         built_files = result_obj.get("built_files", [])
         archive = result_obj.get("zip", "")
         built_count = len(built_files) if isinstance(built_files, list) else 0
-        _final_map, stats = self._build_final_export_map(self._pending_export_overlay)
+        _final_map, _source_map, stats = self._build_final_export_map(self._pending_export_overlay)
         message = (
             f"Built files: {built_count}\n"
             f"Archive: {archive}\n"

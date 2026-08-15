@@ -119,7 +119,7 @@ def merge_master_rows(
     master_rows: dict[str, dict[str, str]],
     mine_rows: dict[str, dict[str, str]],
 ) -> dict[str, dict[str, str]]:
-    out = {row_id: dict(item) for row_id, item in master_rows.items()}
+    out = normalize_master_rows(master_rows)
     for row_id, item in mine_rows.items():
         if item.get("state", "") != "approved":
             continue
@@ -133,6 +133,26 @@ def merge_master_rows(
             "cn_hash": item.get("cn_hash", ""),
             "state": "ours",
             "target": target_text,
+            "needs_context": "1" if item.get("needs_context", "0") in ("1", "true", "yes") else "0",
+            "notes": item.get("notes", ""),
+        }
+    return out
+
+
+def normalize_master_state(state: str) -> str:
+    cleaned = (state or "").strip().lower()
+    if cleaned in {"approved", "rejected"}:
+        return "ours"
+    return cleaned or "ours"
+
+
+def normalize_master_rows(rows: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    out: dict[str, dict[str, str]] = {}
+    for row_id, item in rows.items():
+        out[row_id] = {
+            "cn_hash": item.get("cn_hash", ""),
+            "state": normalize_master_state(item.get("state", "ours")),
+            "target": item.get("target", ""),
             "needs_context": "1" if item.get("needs_context", "0") in ("1", "true", "yes") else "0",
             "notes": item.get("notes", ""),
         }

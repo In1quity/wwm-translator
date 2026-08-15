@@ -97,20 +97,34 @@ def check_row_into_db(
     return {"rows": 1, "issues": len(payload)}
 
 
-def run_qa_on_map(conn, final_map: dict[str, str], target_lang: str) -> dict[str, object]:
+def run_qa_on_map(
+    conn,
+    final_map: dict[str, str],
+    target_lang: str,
+    source_map: dict[str, str] | None = None,
+) -> dict[str, object]:
     glossary = conn.execute("SELECT cn, en, target FROM glossary WHERE strict = 1").fetchall()
     rows = conn.execute("SELECT id, cn, en FROM strings").fetchall()
     payload: list[tuple[str, str, str, str]] = []
+    source_totals = {"master": 0, "official": 0, "empty": 0}
     for row in rows:
         row_id = (row["id"] or "").lower()
         target = final_map.get(row_id, "")
+        source = (source_map or {}).get(row_id, "unknown")
+        if source in source_totals:
+            source_totals[source] += 1
         payload.extend(check_row(row["id"], row["cn"], row["en"], target, glossary, target_lang))
     critical = [item for item in payload if item[2] == "error"]
+    critical_items_with_source: list[tuple[str, str, str, str, str]] = []
+    for row_id, rule, severity, detail in critical[:100]:
+        source = (source_map or {}).get((row_id or "").lower(), "unknown")
+        critical_items_with_source.append((row_id, rule, severity, detail, source))
     return {
         "rows": len(rows),
         "issues": len(payload),
         "critical": len(critical),
-        "critical_items": critical[:100],
+        "critical_items": critical_items_with_source,
+        "source_totals": source_totals,
     }
 
 

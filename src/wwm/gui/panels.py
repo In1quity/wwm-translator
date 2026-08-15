@@ -104,6 +104,29 @@ def fill_qa_panel(conn: sqlite3.Connection, row_id: str) -> list[str]:
     return [f"{row['severity']} | {row['rule']} | {row['detail']}" for row in rows]
 
 
+def fill_qa_overview_panel(conn: sqlite3.Connection, limit: int = 1000) -> list[tuple[str, str]]:
+    rows = conn.execute(
+        """
+        SELECT q.id, q.rule, q.severity, q.detail
+        FROM qa_issues q
+        ORDER BY
+            CASE q.severity
+                WHEN 'error' THEN 0
+                WHEN 'warning' THEN 1
+                ELSE 2
+            END,
+            q.rule,
+            q.id
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [
+        (f"{row['id']} | {row['severity']} | {row['rule']} | {row['detail']}", row["id"])
+        for row in rows
+    ]
+
+
 def fill_same_source_panel(conn: sqlite3.Connection, source_id: str) -> list[tuple[str, str]]:
     rows = preview_same_cn(conn, source_id, 500)
     return [
