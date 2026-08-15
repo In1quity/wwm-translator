@@ -41,7 +41,8 @@ def render_text_to_html(text: str) -> tuple[str, list[str]]:
             next_dollar = text.find("$", i + 1)
             if next_dollar != -1:
                 token = text[i + 1 : next_dollar]
-                if token and all(ch_ in _DOLLAR_VAR_ALLOWED for ch_ in token) and token not in {"S", "E"}:
+                token_allowed = token and all(ch_ in _DOLLAR_VAR_ALLOWED for ch_ in token)
+                if token_allowed and token not in {"S", "E"}:
                     out.append(
                         "<span style='color:#7BDFF2;font-weight:600'>"
                         f"{escape(text[i : next_dollar + 1])}"
