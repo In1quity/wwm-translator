@@ -29,3 +29,10 @@ def test_render_does_not_break_closing_term_tag() -> None:
     html, warnings = render_text_to_html("<term>doc</term>{0}")
     assert "&lt;term&gt;doc&lt;/term&gt;" in html
     assert "unknown tag #C" not in warnings
+
+
+def test_render_supports_hex_color_tags() -> None:
+    html, warnings = render_text_to_html("#44729fСиний#E: #734fa0Пурпурный#E")
+    assert "color:#44729f" in html
+    assert "color:#734fa0" in html
+    assert "closing #E without open tag" not in warnings

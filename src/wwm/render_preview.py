@@ -8,6 +8,13 @@ COLOR_TAGS = {
 }
 
 
+def _is_hex_color_tag(text: str, pos: int) -> bool:
+    if pos + 7 > len(text):
+        return False
+    chunk = text[pos + 1 : pos + 7]
+    return all(ch in "0123456789abcdefABCDEF" for ch in chunk)
+
+
 def render_text_to_html(text: str) -> tuple[str, list[str]]:
     warnings: list[str] = []
     out: list[str] = []
@@ -74,6 +81,12 @@ def render_text_to_html(text: str) -> tuple[str, list[str]]:
                 warnings.append("opening < link tag without closing >")
         if ch == "#" and i + 1 < len(text):
             code = text[i + 1]
+            if _is_hex_color_tag(text, i):
+                hex_color = text[i + 1 : i + 7]
+                color_stack.append(hex_color)
+                out.append(f"<span style='color:#{hex_color};font-weight:600'>")
+                i += 7
+                continue
             if code in COLOR_TAGS:
                 color_stack.append(code)
                 out.append(f"<span style='color:{COLOR_TAGS[code]};font-weight:600'>")
