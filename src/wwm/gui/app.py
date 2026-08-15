@@ -444,7 +444,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+S"), self, activated=self._save_translations)
         QShortcut(QKeySequence("Ctrl+Shift+A"), self, activated=self._approve_current_row)
         QShortcut(QKeySequence("Ctrl+Shift+R"), self, activated=self._reject_current_row)
-        QShortcut(QKeySequence("Ctrl+Shift+C"), self, activated=self._toggle_needs_context_shortcut)
+        QShortcut(QKeySequence("Ctrl+Alt+N"), self, activated=self._toggle_needs_context_shortcut)
 
     def _toolbar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
