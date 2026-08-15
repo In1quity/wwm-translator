@@ -2,46 +2,64 @@
 
 Standalone desktop translator for **Where Winds Meet** locale containers.
 
-This repository now contains only translator code. Translation content is loaded from external files
-and stored in local project folders.
+This repository contains translator tooling only. Translation text is loaded from game files and TSV
+overlays, then stored in local project data.
 
 Part of the locale parsing logic is based on the original community project:
-`https://github.com/DOG729/wwm_russian`.
+[DOG729/wwm_russian](https://github.com/DOG729/wwm_russian).
 
-## Core behavior
+## Core capabilities
 
-- Opens a game folder and target language (`de/en/es/fr/ja/ko/pt_br/ru/th/vi/zh_tw`).
-- Extracts `CN + EN + target` into a project database.
-- Loads optional master translation and glossary from TSV.
-- Saves your edits to `my_translation.tsv`.
-- Exports translated containers and a release zip.
+- Open a game folder and choose one target language per project.
+- Extract `CN + EN + official target` into `project.db`.
+- Work with layered translation data:
+  - `Official target` (from game files)
+  - `Master translation` (external TSV overlay)
+  - `My translation` (personal TSV overlay, editable)
+- Review with per-row `Approve/Reject`, batch review, and `Needs Context`.
+- Use side panels: `TM`, `Glossary`, `QA`, `Same Source`, `Rendered Preview`, `Notes`.
+- Save `My translation` and merge approved rows into `Master`.
+- Export final containers from `Official + saved Master overrides`.
 
-## Data location
+## Data layout
 
-When launched as `.exe`, the app always stores data next to the executable:
+When launched as `.exe`, app data is stored next to the executable:
 
 `WWMTranslator/data/projects/<game_slug>_<lang>/`
 
-Project contents:
+Project files:
 
 - `project.db`
 - `my_translation.tsv`
 - `project.json`
 
-Important behavior:
+Startup behavior:
 
-- app startup does **not** rebuild DB automatically;
-- opening existing project uses existing DB cache;
-- DB rebuild/extract is triggered only when needed during `Open project`.
+- app does not rebuild DB on every launch;
+- existing project cache is reused;
+- extraction runs only when needed during project open.
 
-## GUI workflow
+## GUI flow (current)
 
 1. Launch `WWMTranslator.exe`.
-2. Click **Open project** and choose game root + target language.
-3. Wait for extraction/progress (first run only).
-4. Optionally click **Load master translation** and **Load glossary**.
-5. Translate rows and click **Save translation**.
-6. Click **Export files** and choose output directory.
+2. Open `Project -> Create DB`, choose game root and target language.
+3. Wait for extraction (first run).
+4. Optionally load:
+   - `Project -> Load master translation`
+   - `Project -> Load glossary`
+5. Translate in table/editor, use `Approve/Reject`, `Needs Context`, and `Notes`.
+6. Save personal layer via `Translation -> Save translation`.
+7. Apply approved rows to master via `Translation -> Save master translation`.
+8. Run `Tools -> Run QA` (background worker).
+9. Export via `Export -> Export translation`.
+
+## QA and export behavior
+
+- `Run QA` validates placeholders, link tags, glossary strict terms, and render tag consistency.
+- QA panel supports row-level errors and project-wide error overview with navigation to row.
+- Before export, app runs QA on final assembled output (`Official + Master`).
+- Critical export QA dialog includes issue source split (`MASTER` / `OFFICIAL` / `EMPTY`).
+- Export can continue with explicit `Export anyway`.
 
 ## CLI quick reference
 
@@ -71,14 +89,15 @@ Output directory:
 
 `dist/WWMTranslator/`
 
-## CI/Release workflow
+## CI/Release
 
 - PR/push: lint + tests (`.github/workflows/ci.yml`)
-- tag `v*`: Windows build via PyInstaller + zipped release asset upload
+- Tag `v*`: Windows build with PyInstaller + zipped release asset upload
 
 ## Documentation
 
 - `docs/architecture.md`
+- `docs/workflow.md`
 - `docs/format_translation_tsv.md`
 - `docs/localization.md`
 - `docs/tags.md`

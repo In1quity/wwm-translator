@@ -1,31 +1,42 @@
 # WWM Translator
 
-Standalone translator utility for Where Winds Meet localization containers.
+WWM Translator is a standalone desktop utility for editing **Where Winds Meet** localization data
+with fast QA and layered translation workflow.
 
-## Features
+## Key features
 
-- Open game root folder and choose target language
-- Extract CN + EN + target language into searchable project DB
-- Load external master translation TSV
-- Load external glossary TSV
-- Translate in GUI with tags/placeholders checks
-- Export updated locale containers and zip package
-- Keep project data locally in `data/` near executable
+- Open game root and create a language-specific project cache.
+- Parse and index `CN`, `EN`, and official target text into SQLite.
+- Work with three translation layers:
+  - official target (reference)
+  - master translation TSV (trusted overrides)
+  - personal translation TSV (editable draft)
+- Review rows with `Approve/Reject`, bulk review, and state filters.
+- Use productivity panels:
+  - TM (trusted/reference/draft split)
+  - Glossary mismatch hints
+  - QA issue navigation
+  - Same Source list with one-click apply
+  - Rendered Preview for game tags
+  - Notes and Needs Context flags
+- Run QA before export and review critical issues by source.
+- Export updated locale containers and release zip.
 
-## How to use
+## Typical usage
 
-1. Download and unpack `WWMTranslator-<version>-win64.zip`.
-2. Run `WWMTranslator.exe`.
-3. Click **Open project**, select game root folder and target language.
-4. Wait for initial extraction progress (first open only).
-5. Optionally load master translation and glossary.
-6. Translate and click **Save translation**.
-7. Click **Export files** for final game containers.
+1. Launch `WWMTranslator.exe`.
+2. `Project -> Create DB`, choose game root and language.
+3. Optionally load master translation and glossary TSV files.
+4. Translate and review in the table/editor.
+5. Save personal progress (`Save translation`).
+6. Push approved rows into master (`Save master translation`).
+7. Run QA and export final translation.
 
-## Safety
+## Data safety
 
-- Tool does not modify repository files.
-- Translation data is stored in local project folders near exe:
+- Tool works on local project files and export output only.
+- It does not require online services.
+- Project data is kept near executable:
   - `data/projects/<game>_<lang>/project.db`
   - `data/projects/<game>_<lang>/my_translation.tsv`
-- Exported files are written only to selected output directory.
+- Export writes only to selected output directory.

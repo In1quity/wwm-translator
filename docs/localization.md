@@ -2,31 +2,67 @@
 
 ## Source priority
 
-- Primary source is `CN`.
-- `EN` is reference/help text.
-- Final output is `target` language selected in project.
+- Primary semantic source is `CN`.
+- `EN` is reference-only context.
+- Official target is baseline reference for the selected language.
 
-If `CN` and `EN` disagree semantically, prioritize `CN`.
+If `CN` and `EN` conflict, follow `CN`.
 
-## String states
+## Translation layers
 
-- `official` — only official target text exists.
-- `untranslated` — no official text and no user translation.
-- `new` — user translation exists but master translation does not.
-- `master` — user translation equals master translation.
-- `changed` — user translation differs from master translation.
-- `outdated` — `cn_hash` mismatch, source CN changed.
+- `Official target`  
+  In-game translation currently shipped by the game.
+- `Master translation`  
+  External trusted overlay used for final export overrides.
+- `My translation`  
+  Personal editable draft/review layer.
 
-## Required invariants
+Effective row text in editor is based on layered comparison, not on DB-only values.
 
-Do not break:
+## Row state model
 
-- placeholders like `{0}`, `{month}`, `{total_day:d}`
-- game link tags like `<...|...|...|...>`
-- escaped sequences `\n`, `\r`, `\t`
+Main states:
+
+- `official` — only official target exists.
+- `untranslated` — no official/master/my text.
+- `new` — my translation exists, no master equivalent.
+- `master` — my translation equals master translation.
+- `changed` — my translation differs from master translation.
+- `outdated` — source CN changed (`cn_hash` mismatch).
+- `approved` / `rejected` — personal review marks.
+- `official_match` — my translation equals official target and differs from master.
+
+Notes:
+
+- `approved/rejected` are personal workflow states.
+- editing my text can reset personal review status.
+- auto-approve may apply when my text equals master text.
+
+## Review behavior
+
+- `Approve` sets personal review status for row/selection.
+- `Reject` sets personal review status for row/selection and does not clear text.
+- `Save master translation` applies approved personal text into master overlay.
+- Master file should remain clean from personal-only review semantics.
+
+## Notes and context
+
+- `Needs Context` is an independent per-row flag.
+- `Notes` is a per-row multiline field.
+- Both are persisted in personal TSV workflow.
 
 ## Glossary behavior
 
-- Glossary is loaded from external TSV (`CN, EN, Target, Category, Strict`).
-- UI panel shows matching entries for current row (`CN` contains term or `EN` contains term).
-- QA reports `glossary_term_missing` when strict term is expected but missing in translation.
+- Glossary loads from external TSV (`CN, EN, Target, Category, Strict`).
+- Glossary panel shows row-relevant entries based on source text matches.
+- Strict terms are validated by QA (`glossary_term_missing`).
+
+## Required invariants
+
+Never break structural markers:
+
+- placeholders (`{...}`)
+- link tags (`<...|...>`)
+- color tags (`#Y...#E`, `#RRGGBB...#E`)
+- dollar markers (`$...$`, `$S`, `$E`)
+- escaped control markers (`\n`, `/w`, etc.)

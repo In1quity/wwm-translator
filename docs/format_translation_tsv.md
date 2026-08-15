@@ -1,49 +1,60 @@
 # Translation TSV format
 
-The application supports two translation TSV schemas.
+The application uses two TSV overlay types.
 
 ## 1) Master translation TSV
 
-Header:
+Preferred header:
+
+`ID	cn_hash	state	target`
+
+Supported extended header (legacy-compatible):
 
 `ID	cn_hash	state	target	needs_context	notes`
 
-Fields:
+Field meaning:
 
-- `ID` — locale string ID.
-- `cn_hash` — first 16 chars of SHA-256 for CN text.
-- `state` — optional status marker (usually `ours`, `master`, `approved`, `notranslate`).
-- `target` — translated text.
-- `needs_context` — `1`/`0` flag.
-- `notes` — free multiline notes text.
+- `ID` — locale row id.
+- `cn_hash` — first 16 chars of SHA-256 from source CN.
+- `state` — persisted as normalized master state (`ours`).
+- `target` — translation override text.
+- `needs_context`, `notes` — optional/pass-through compatibility fields.
+
+Important behavior:
+
+- personal review states (`approved` / `rejected`) are not master-authoritative;
+- when loaded, master states are normalized (review states do not remain in master layer).
 
 Used by:
 
-- GUI button **Load master translation**
-- CLI `--master` arguments (`qa` and `export`)
+- GUI: `Project -> Load master translation`
+- GUI: `Translation -> Save master translation`
+- CLI: `--master` in QA/export commands
 
-## 2) Project translation TSV
+## 2) Personal translation TSV (`my_translation.tsv`)
 
 Header:
 
 `ID	cn_hash	state	target	cn	en	needs_context	notes`
 
-Additional fields:
+Fields:
 
-- `cn` — source CN snapshot for review/debug.
-- `en` — source EN snapshot for review/debug.
-- `needs_context` — per-row context request flag (`1`/`0`).
-- `notes` — per-row notes text.
+- `state` — personal workflow state (`ours`, `approved`, `rejected`, etc.).
+- `target` — editable personal translation.
+- `cn`, `en` — source snapshots for local review/debug.
+- `needs_context` — personal context flag (`1`/`0`).
+- `notes` — personal note text.
 
 Used by:
 
-- GUI button **Save translation**
-- stored at `data/projects/<slug>_<lang>/my_translation.tsv`
+- GUI: `Translation -> Save translation`
+- Stored at: `data/projects/<slug>_<lang>/my_translation.tsv`
 
-## Parsing rules
+## Parsing and compatibility rules
 
-- Encoding: UTF-8/UTF-8 BOM.
+- Encoding: UTF-8 or UTF-8 BOM.
 - Delimiter: tab.
+- IDs are normalized to lowercase.
 - Rows with fewer than 4 columns are ignored.
 - Extra columns are ignored.
-- IDs are normalized to lowercase internally.
+- Missing optional columns default to safe values.
