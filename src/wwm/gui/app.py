@@ -232,6 +232,7 @@ class MainWindow(QMainWindow):
         self._render_preview_source = "ours"
         self._pending_export_overlay: dict[str, dict[str, str]] = {}
         self._loading_row = False
+        self._selection_snapshot: list[tuple[str, int]] = []
         self._project_thread: QThread | None = None
         self._project_worker: ProjectOpenWorker | None = None
         self._project_progress: QProgressDialog | None = None
@@ -305,6 +306,7 @@ class MainWindow(QMainWindow):
         self.table.setMouseTracking(True)
         self.table.setItemDelegateForColumn(0, ActionCellDelegate(self.table))
         self.table.setItemDelegateForColumn(1, ActionCellDelegate(self.table))
+        self.table.pressed.connect(self._capture_selection_snapshot)
         self.table.clicked.connect(self._on_row)
         editor_splitter.addWidget(self.table)
 
@@ -659,6 +661,11 @@ class MainWindow(QMainWindow):
                 out.append((row_id, idx.row()))
         return out
 
+    def _capture_selection_snapshot(self, _index: QModelIndex) -> None:
+        # Clicking an action cell can collapse selection before click handler runs.
+        # Keep the pre-click selection so bulk approve/reject still works.
+        self._selection_snapshot = self._selected_rows()
+
     def _mark_rows_from_selection(
         self,
         next_state: str,
@@ -666,6 +673,9 @@ class MainWindow(QMainWindow):
         fallback_row: int,
     ) -> None:
         selected = self._selected_rows()
+        if len(selected) <= 1 and len(self._selection_snapshot) > 1:
+            selected = list(self._selection_snapshot)
+        self._selection_snapshot = []
         if not selected:
             selected = [(fallback_row_id, fallback_row)]
         if len(selected) == 1:
