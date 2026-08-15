@@ -159,11 +159,16 @@ def render_text_to_html(text: str) -> tuple[str, list[str]]:
                 parts = _split_top_level_pipes(inner)
                 if len(parts) > 1 or _contains_nested_pipe_link(inner):
                     visible = _extract_visible_link_text(inner)
+                    # Pattern like "<...<link|...>> <link|...>" uses the second ">"
+                    # as visible separator between linked names in game text.
+                    keep_trailing_angle = len(parts) == 1 and end > i and text[end - 1] == ">"
                     out.append(
                         "<span style='color:#9AD1FF;font-weight:600'>"
                         f"{escape(visible)}"
                         "</span>"
                     )
+                    if keep_trailing_angle:
+                        out.append(escape(">"))
                     i = end + 1
                     continue
         if ch == "#" and i + 1 < len(text):

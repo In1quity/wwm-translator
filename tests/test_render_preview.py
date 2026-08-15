@@ -55,3 +55,12 @@ def test_render_supports_nested_link_payloads() -> None:
     assert "Меча Безымянного" in html
     assert "#C" not in html
     assert not warnings
+
+
+def test_render_keeps_separator_angle_for_double_closing_pattern() -> None:
+    source = (
+        "<Заряженный навык <Бродячего меча|781|#C|10102|781>> "
+        "<Меча Безымянного|#C|10102|20201006>"
+    )
+    html, _warnings = render_text_to_html(source)
+    assert "&gt; <span style='color:#9AD1FF;font-weight:600'>" in html
