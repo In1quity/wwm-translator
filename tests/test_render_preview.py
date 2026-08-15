@@ -70,3 +70,20 @@ def test_render_supports_w_separator() -> None:
     html, warnings = render_text_to_html("a/wb\\wc")
     assert "<br/><br/>" in html
     assert not warnings
+
+
+def test_render_supports_d_color_tag() -> None:
+    html, warnings = render_text_to_html("#DТекущий эффект#E")
+    assert "color:#C8A2FF" in html
+    assert "Текущий эффект" in html
+    assert not warnings
+
+
+def test_render_supports_p_and_n_control_markers() -> None:
+    html, warnings = render_text_to_html("#D当前效果：#E\n$P\n\n#D突破预览：#E\n$N")
+    assert "$P" in html
+    assert "$N" in html
+    assert "color:#FF8C42" in html
+    assert "当前效果" in html
+    assert "突破预览" in html
+    assert not warnings

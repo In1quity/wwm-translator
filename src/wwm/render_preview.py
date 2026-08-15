@@ -5,8 +5,10 @@ from html import escape
 COLOR_TAGS = {
     "Y": "#F4D35E",
     "G": "#8EE08E",
+    "D": "#C8A2FF",
 }
 _DOLLAR_VAR_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_:.+-")
+_DOLLAR_CONTROL_MARKERS = {"S", "E", "P", "N"}
 
 
 def _is_hex_color_tag(text: str, pos: int) -> bool:
@@ -117,7 +119,7 @@ def render_text_to_html(text: str) -> tuple[str, list[str]]:
             if next_dollar != -1:
                 token = text[i + 1 : next_dollar]
                 token_allowed = token and all(ch_ in _DOLLAR_VAR_ALLOWED for ch_ in token)
-                if token_allowed and token not in {"S", "E"}:
+                if token_allowed and token not in _DOLLAR_CONTROL_MARKERS:
                     out.append(
                         "<span style='color:#7BDFF2;font-weight:600'>"
                         f"{escape(text[i : next_dollar + 1])}"
@@ -156,6 +158,14 @@ def render_text_to_html(text: str) -> tuple[str, list[str]]:
                 else:
                     warnings.append("closing $E without open $S")
                     out.append(escape("$E"))
+                i += 2
+                continue
+            if control in {"P", "N"}:
+                out.append(
+                    "<span style='color:#FF8C42;font-weight:600'>"
+                    f"{escape(text[i : i + 2])}"
+                    "</span>"
+                )
                 i += 2
                 continue
         if ch == "<":

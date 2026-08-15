@@ -86,7 +86,7 @@ class TagHighlighter(QSyntaxHighlighter):
         game_tag = QTextCharFormat()
         game_tag.setForeground(QColor("#F4D35E"))
         game_tag.setFontWeight(QFont.Weight.Bold)
-        self.rules.append((QRegularExpression(r"#(?:Y|G)[^#\n]{0,400}#E"), game_tag))
+        self.rules.append((QRegularExpression(r"#(?:Y|G|D)[^#\n]{0,400}#E"), game_tag))
         self.rules.append((QRegularExpression(r"#[0-9A-Fa-f]{6}[^#\n]{0,400}#E"), game_tag))
 
         placeholder = QTextCharFormat()
@@ -100,7 +100,7 @@ class TagHighlighter(QSyntaxHighlighter):
         self.rules.append((QRegularExpression(r"\\[nrtw]"), control_markers))
         self.rules.append((QRegularExpression(r"/[nrtw]"), control_markers))
         self.rules.append((QRegularExpression(r"\$[A-Za-z0-9_:.+\-]+\$"), control_markers))
-        self.rules.append((QRegularExpression(r"\$(?:S|E)"), control_markers))
+        self.rules.append((QRegularExpression(r"\$(?:S|E|P|N)"), control_markers))
 
         xml_like = QTextCharFormat()
         xml_like.setForeground(QColor("#B8F2E6"))
