@@ -633,11 +633,44 @@ class StringsTableModel(QAbstractTableModel):
                 return ids.index(key)
             except ValueError:
                 return None
+        fast = self._index_of_by_sql(key)
+        if fast is not None:
+            return fast
         for idx in range(self.total):
             candidate = self.row_id(idx)
             if (candidate or "").lower() == key:
                 return idx
         return None
+
+    def _index_of_by_sql(self, row_id_lower: str) -> int | None:
+        if self.q.search:
+            return None
+        if self.q.sort_by != "id":
+            return None
+        where, params = _where_without_state(self.q)
+        where = _append_visibility_clause(where)
+        if self.q.state:
+            if not self.repo._can_use_sql_state_filter(self.q):
+                return None
+            where = _append_sql_state_clause(where, self.q.state)
+
+        exists_where = f"{where} AND lower(s.id) = ?" if where else "WHERE lower(s.id) = ?"
+        exists = self.repo.conn.execute(
+            f"SELECT 1 FROM strings s {exists_where} LIMIT 1",
+            (*params, row_id_lower),
+        ).fetchone()
+        if exists is None:
+            return None
+
+        if self.q.sort_desc:
+            rank_where = f"{where} AND lower(s.id) > ?" if where else "WHERE lower(s.id) > ?"
+        else:
+            rank_where = f"{where} AND lower(s.id) < ?" if where else "WHERE lower(s.id) < ?"
+        row = self.repo.conn.execute(
+            f"SELECT COUNT(*) FROM strings s {rank_where}",
+            (*params, row_id_lower),
+        ).fetchone()
+        return int(row[0] if row else 0)
 
     def refresh_row(self, row_index: int) -> None:
         if row_index < 0 or row_index >= self.total:
