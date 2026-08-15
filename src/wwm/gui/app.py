@@ -212,6 +212,31 @@ class ExportWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class QAWorker(QObject):
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(
+        self,
+        db_path: Path,
+        overlay_rows: dict[str, dict[str, str]],
+        target_lang: str,
+    ) -> None:
+        super().__init__()
+        self.db_path = db_path
+        self.overlay_rows = overlay_rows
+        self.target_lang = target_lang
+
+    def run(self) -> None:
+        try:
+            self.progress.emit("Running QA...")
+            result = run_qa(self.db_path, self.overlay_rows, self.target_lang)
+            self.finished.emit(result)
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
     def __init__(self, game_root: Path | None = None, target_lang: str | None = None) -> None:
         super().__init__()
@@ -240,6 +265,9 @@ class MainWindow(QMainWindow):
         self._export_worker: ExportWorker | None = None
         self._export_progress: QProgressDialog | None = None
         self._export_output_dir: Path | None = None
+        self._qa_thread: QThread | None = None
+        self._qa_worker: QAWorker | None = None
+        self._qa_progress: QProgressDialog | None = None
 
         self.setWindowTitle("WWM Translator")
         self.resize(1800, 1000)
@@ -973,10 +1001,64 @@ class MainWindow(QMainWindow):
     def _run_qa(self) -> None:
         if self.project is None:
             return
-        result = run_qa(self.project.db_path, self._effective_overlay(), self.project.target_lang)
-        QMessageBox.information(self, "QA", f"Rows: {result['rows']}\nIssues: {result['issues']}")
+        if self._qa_thread is not None:
+            QMessageBox.information(self, "QA", "QA is already in progress.")
+            return
+        self._persist_current_row()
+        self._qa_progress = QProgressDialog("Running QA...", "", 0, 0, self)
+        self._qa_progress.setWindowTitle("Please wait")
+        self._qa_progress.setCancelButton(None)
+        self._qa_progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self._qa_progress.setMinimumDuration(0)
+        self._qa_progress.show()
+
+        self._qa_thread = QThread(self)
+        self._qa_worker = QAWorker(
+            self.project.db_path,
+            self._effective_overlay(),
+            self.project.target_lang,
+        )
+        self._qa_worker.moveToThread(self._qa_thread)
+        self._qa_thread.started.connect(self._qa_worker.run)
+        self._qa_worker.progress.connect(self._on_qa_progress)
+        self._qa_worker.finished.connect(self._on_qa_ready)
+        self._qa_worker.failed.connect(self._on_qa_failed)
+        self._qa_worker.finished.connect(self._qa_thread.quit)
+        self._qa_worker.failed.connect(self._qa_thread.quit)
+        self._qa_thread.finished.connect(self._cleanup_qa_runner)
+        self._qa_thread.start()
+
+    def _on_qa_progress(self, message: str) -> None:
+        if self._qa_progress is not None:
+            self._qa_progress.setLabelText(message)
+
+    def _on_qa_failed(self, message: str) -> None:
+        if self._qa_progress is not None:
+            self._qa_progress.close()
+        QMessageBox.critical(self, "QA failed", message)
+
+    def _on_qa_ready(self, result_obj: object) -> None:
+        if self._qa_progress is not None:
+            self._qa_progress.close()
+        if not isinstance(result_obj, dict):
+            QMessageBox.critical(self, "QA failed", "Invalid QA result returned.")
+            return
+        QMessageBox.information(
+            self,
+            "QA",
+            f"Rows: {result_obj.get('rows', 0)}\nIssues: {result_obj.get('issues', 0)}",
+        )
         if self.current_id:
             self._on_row()
+
+    def _cleanup_qa_runner(self) -> None:
+        if self._qa_worker is not None:
+            self._qa_worker.deleteLater()
+        if self._qa_thread is not None:
+            self._qa_thread.deleteLater()
+        self._qa_worker = None
+        self._qa_thread = None
+        self._qa_progress = None
 
     def _rebuild_tm(self) -> None:
         if self.conn is None:

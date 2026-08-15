@@ -23,3 +23,9 @@ def test_render_reports_unbalanced_color_tag() -> None:
 def test_render_reports_unbalanced_conditional_tags() -> None:
     _html, warnings = render_text_to_html("$S text")
     assert "opening $S without closing $E" in warnings
+
+
+def test_render_does_not_break_closing_term_tag() -> None:
+    html, warnings = render_text_to_html("<term>doc</term>{0}")
+    assert "&lt;term&gt;doc&lt;/term&gt;" in html
+    assert "unknown tag #C" not in warnings

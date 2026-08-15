@@ -16,7 +16,20 @@ def render_text_to_html(text: str) -> tuple[str, list[str]]:
     i = 0
     while i < len(text):
         ch = text[i]
-        if ch in ("\\", "/") and i + 1 < len(text):
+        if ch == "\\" and i + 1 < len(text):
+            escaped = text[i + 1]
+            if escaped == "n":
+                out.append("<br/>")
+                i += 2
+                continue
+            if escaped == "r":
+                i += 2
+                continue
+            if escaped == "t":
+                out.append("&nbsp;&nbsp;&nbsp;&nbsp;")
+                i += 2
+                continue
+        if ch == "/" and i + 1 < len(text) and not (i > 0 and text[i - 1] == "<"):
             escaped = text[i + 1]
             if escaped == "n":
                 out.append("<br/>")

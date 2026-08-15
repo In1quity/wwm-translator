@@ -40,23 +40,33 @@ def check_row(
 def run_qa(db_path, overlay: dict[str, dict[str, str]], target_lang: str) -> dict[str, int]:
     conn = open_db(db_path)
     conn.execute("DELETE FROM qa_issues")
-    rows = conn.execute("SELECT id, cn, en, target_official FROM strings").fetchall()
-    payload: list[tuple[str, str, str, str]] = []
+    rows = conn.execute("SELECT id, cn, en, target_official FROM strings")
     glossary = conn.execute("SELECT cn, en, target FROM glossary WHERE strict = 1").fetchall()
+    payload: list[tuple[str, str, str, str]] = []
+    rows_count = 0
     for row in rows:
+        rows_count += 1
         item = overlay.get((row["id"] or "").lower())
         target = row["target_official"] or ""
         if item and item.get("cn_hash", "") == cn_hash(row["cn"] or ""):
             target = item.get("target", "")
         payload.extend(check_row(row["id"], row["cn"], row["en"], target, glossary, target_lang))
-    conn.executemany(
-        "INSERT INTO qa_issues(id, rule, severity, detail) VALUES(?, ?, ?, ?)", payload
-    )
+        if len(payload) >= 2000:
+            conn.executemany(
+                "INSERT OR REPLACE INTO qa_issues(id, rule, severity, detail) VALUES(?, ?, ?, ?)",
+                payload,
+            )
+            payload.clear()
+    if payload:
+        conn.executemany(
+            "INSERT OR REPLACE INTO qa_issues(id, rule, severity, detail) VALUES(?, ?, ?, ?)",
+            payload,
+        )
     _add_cn_conflicts(conn, overlay)
     conn.commit()
     total = int(conn.execute("SELECT COUNT(*) FROM qa_issues").fetchone()[0])
     conn.close()
-    return {"rows": len(rows), "issues": total}
+    return {"rows": rows_count, "issues": total}
 
 
 def check_row_into_db(
@@ -164,9 +174,11 @@ def _field(item: Any, key: str, index: int) -> str:
 
 
 def _add_cn_conflicts(conn, overlay: dict[str, dict[str, str]]) -> None:
-    rows = conn.execute("SELECT id, cn, target_official FROM strings WHERE cn != ''").fetchall()
-    cn_to_targets: dict[str, set[str]] = {}
-    for row in rows:
+    # Two-pass streaming approach to avoid loading all rows/targets into memory.
+    cn_first_target: dict[str, str] = {}
+    cn_conflicted: set[str] = set()
+
+    for row in conn.execute("SELECT id, cn, target_official FROM strings WHERE cn != ''"):
         row_id = (row["id"] or "").lower()
         item = overlay.get(row_id)
         target = row["target_official"] or ""
@@ -174,20 +186,35 @@ def _add_cn_conflicts(conn, overlay: dict[str, dict[str, str]]) -> None:
             target = item.get("target", "") or target
         if not target:
             continue
-        cn_to_targets.setdefault(row["cn"], set()).add(target)
-    multi = {cn for cn, targets in cn_to_targets.items() if len(targets) > 1}
+        cn_text = row["cn"] or ""
+        first = cn_first_target.get(cn_text)
+        if first is None:
+            cn_first_target[cn_text] = target
+        elif first != target:
+            cn_conflicted.add(cn_text)
+
+    if not cn_conflicted:
+        return
+
     payload: list[tuple[str, str, str, str]] = []
-    if multi:
-        for row in rows:
-            if row["cn"] in multi:
-                payload.append(
-                    (
-                        row["id"],
-                        "cn_multiple_target_variants",
-                        "warning",
-                        "same CN has multiple target variants",
-                    )
-                )
+    for row in conn.execute("SELECT id, cn FROM strings WHERE cn != ''"):
+        cn_text = row["cn"] or ""
+        if cn_text not in cn_conflicted:
+            continue
+        payload.append(
+            (
+                row["id"],
+                "cn_multiple_target_variants",
+                "warning",
+                "same CN has multiple target variants",
+            )
+        )
+        if len(payload) >= 4000:
+            conn.executemany(
+                "INSERT OR IGNORE INTO qa_issues(id, rule, severity, detail) VALUES(?, ?, ?, ?)",
+                payload,
+            )
+            payload.clear()
     if payload:
         conn.executemany(
             "INSERT OR IGNORE INTO qa_issues(id, rule, severity, detail) VALUES(?, ?, ?, ?)",
