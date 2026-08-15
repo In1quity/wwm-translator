@@ -5,15 +5,25 @@ from pathlib import Path
 import pytest
 
 from wwm.container import pack_container, unpack_container
+from wwm.project import LANG_CODES, load_recent_projects
+
+
+def _source_from_last_gui_project() -> Path:
+    recents = load_recent_projects()
+    if not recents:
+        pytest.skip("No recent GUI projects found in data/recent.json")
+    project = recents[0]
+    file_base = LANG_CODES.get(project.target_lang)
+    if not file_base:
+        pytest.skip(f"Unsupported target language in recent project: {project.target_lang}")
+    source = project.game_root / "Package" / "HD" / "oversea" / "locale" / file_base
+    if not source.is_file():
+        pytest.skip(f"Locale container not found for recent GUI project: {source}")
+    return source
 
 
 def test_roundtrip_translate_words_map_ru(tmp_path: Path) -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    source = (
-        repo_root / "local" / "Package" / "HD" / "oversea" / "locale" / "translate_words_map_ru"
-    )
-    if not source.is_file():
-        pytest.skip("local client file translate_words_map_ru not found")
+    source = _source_from_last_gui_project()
 
     dat_dir = tmp_path / "dat"
     src_blocks = unpack_container(source, dat_dir)

@@ -4,7 +4,13 @@ import sqlite3
 
 import pytest
 
-pytest.importorskip("PyQt6.QtGui")
+try:
+    import PyQt6.QtGui  # noqa: F401
+except ImportError as exc:
+    pytest.skip(
+        f"PyQt6 QtGui is unavailable in this environment: {exc}",
+        allow_module_level=True,
+    )
 
 from wwm.gui.models import StringsRepository
 from wwm.overlay import cn_hash
