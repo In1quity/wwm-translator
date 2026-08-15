@@ -43,8 +43,12 @@ def fill_tm_panel(
 
     draft = {}
     current_key = (current_id or "").lower()
-    for row_id, item in mine_overlay.items():
+    for row in same_cn_rows:
+        row_id = (row["id"] or "").lower()
         if row_id == current_key:
+            continue
+        item = mine_overlay.get(row_id)
+        if item is None:
             continue
         if (item.get("cn") or "") != cn_text:
             continue

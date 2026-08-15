@@ -394,8 +394,14 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.tm_list = QListWidget()
         self.glossary_list = QListWidget()
+        self.qa_tab = QWidget()
+        qa_layout = QVBoxLayout(self.qa_tab)
+        self.qa_show_all_btn = QPushButton("Show all errors")
+        self.qa_show_all_btn.clicked.connect(self._show_qa_overview_panel)
+        qa_layout.addWidget(self.qa_show_all_btn)
         self.qa_list = QListWidget()
         self.qa_list.itemClicked.connect(self._on_qa_item_click)
+        qa_layout.addWidget(self.qa_list, 1)
         self.same_source_list = QListWidget()
         self.same_source_list.itemClicked.connect(self._on_same_source_click)
         self.rendered_preview = QTextBrowser()
@@ -416,7 +422,7 @@ class MainWindow(QMainWindow):
         self.notes_tab.setPlaceholderText("Row notes")
         self.tabs.addTab(self.tm_list, "TM")
         self.tabs.addTab(self.glossary_list, "Glossary")
-        self.tabs.addTab(self.qa_list, "QA")
+        self.tabs.addTab(self.qa_tab, "QA")
         self.tabs.addTab(self.same_source_list, "Same Source")
         self.tabs.addTab(rendered_tab, "Rendered Preview")
         self.tabs.addTab(self.notes_tab, "Notes")
@@ -429,7 +435,11 @@ class MainWindow(QMainWindow):
         editor.setMaximumHeight(110)
         if read_only:
             editor.setProperty("readonlyField", True)
-            editor.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            editor.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByKeyboard
+                | Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+            editor.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         else:
             editor.setProperty("editableField", True)
         editor._tag_highlighter = TagHighlighter(editor.document())
@@ -820,6 +830,7 @@ class MainWindow(QMainWindow):
     def _show_qa_overview_panel(self) -> None:
         if self.conn is None:
             return
+        self.tabs.setCurrentWidget(self.qa_tab)
         self.qa_list.clear()
         self._qa_issue_row_ids.clear()
         for index, (item, issue_row_id) in enumerate(fill_qa_overview_panel(self.conn, limit=3000)):
@@ -890,7 +901,7 @@ class MainWindow(QMainWindow):
         self._on_row(idx)
 
     def _on_tab_changed(self, tab_index: int) -> None:
-        qa_tab_index = self.tabs.indexOf(self.qa_list)
+        qa_tab_index = self.tabs.indexOf(self.qa_tab)
         if tab_index != qa_tab_index:
             return
         if self.conn is None:

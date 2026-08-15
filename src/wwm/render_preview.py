@@ -6,6 +6,7 @@ COLOR_TAGS = {
     "Y": "#F4D35E",
     "G": "#8EE08E",
 }
+_DOLLAR_VAR_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_:.+-")
 
 
 def _is_hex_color_tag(text: str, pos: int) -> bool:
@@ -36,6 +37,18 @@ def render_text_to_html(text: str) -> tuple[str, list[str]]:
                 out.append("&nbsp;&nbsp;&nbsp;&nbsp;")
                 i += 2
                 continue
+        if ch == "$":
+            next_dollar = text.find("$", i + 1)
+            if next_dollar != -1:
+                token = text[i + 1 : next_dollar]
+                if token and all(ch_ in _DOLLAR_VAR_ALLOWED for ch_ in token) and token not in {"S", "E"}:
+                    out.append(
+                        "<span style='color:#7BDFF2;font-weight:600'>"
+                        f"{escape(text[i : next_dollar + 1])}"
+                        "</span>"
+                    )
+                    i = next_dollar + 1
+                    continue
         if ch == "/" and i + 1 < len(text) and not (i > 0 and text[i - 1] == "<"):
             escaped = text[i + 1]
             if escaped == "n":

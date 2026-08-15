@@ -36,3 +36,9 @@ def test_render_supports_hex_color_tags() -> None:
     assert "color:#44729f" in html
     assert "color:#734fa0" in html
     assert "closing #E without open tag" not in warnings
+
+
+def test_render_supports_dollar_wrapped_variables() -> None:
+    html, warnings = render_text_to_html("$STEADY_MIN_PRO_ATK_E:.1f$")
+    assert "$STEADY_MIN_PRO_ATK_E:.1f$" in html
+    assert "opening $S without closing $E" not in warnings
