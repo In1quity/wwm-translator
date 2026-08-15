@@ -94,6 +94,13 @@ class TagHighlighter(QSyntaxHighlighter):
         placeholder.setFontWeight(QFont.Weight.Bold)
         self.rules.append((QRegularExpression(r"\{[^{}\n]{1,120}\}"), placeholder))
 
+        control_markers = QTextCharFormat()
+        control_markers.setForeground(QColor("#B8A9FF"))
+        control_markers.setFontWeight(QFont.Weight.Bold)
+        self.rules.append((QRegularExpression(r"(?:\\|/)[nrtw]"), control_markers))
+        self.rules.append((QRegularExpression(r"\$[A-Za-z0-9_:.+\-]+\$"), control_markers))
+        self.rules.append((QRegularExpression(r"\$(?:S|E)"), control_markers))
+
         xml_like = QTextCharFormat()
         xml_like.setForeground(QColor("#B8F2E6"))
         self.rules.append((QRegularExpression(r"<[^<>\n]{1,200}>"), xml_like))
