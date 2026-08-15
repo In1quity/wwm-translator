@@ -708,15 +708,52 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        for row_id, row_index in selected:
-            row = self.repo.get_row(row_id)
-            if row is None:
-                continue
-            has_target = (row.get("target", "") or "").strip()
-            has_master = (row.get("target_master", "") or "").strip()
-            if not has_target and not has_master:
-                continue
-            self._mark_row(row_id, next_state, row_index)
+        changed_rows = 0
+        self.table.setUpdatesEnabled(False)
+        try:
+            for row_id, _row_index in selected:
+                row = self.repo.get_row(row_id)
+                if row is None:
+                    continue
+                has_target = (row.get("target", "") or "").strip()
+                has_master = (row.get("target_master", "") or "").strip()
+                if not has_target and not has_master:
+                    continue
+                key = row_id.lower()
+                current = self.mine_rows.get(key)
+                toggled_state = "ours"
+                if current is None or current.get("state", "ours") != next_state:
+                    toggled_state = next_state
+                if current:
+                    target_text = current.get("target", row.get("target", ""))
+                    notes_text = current.get("notes", "")
+                    needs_context = current.get("needs_context", "0")
+                else:
+                    target_text = row.get("target", "")
+                    notes_text = ""
+                    needs_context = "0"
+                new_item = {
+                    "cn_hash": cn_hash(row["cn"]),
+                    "state": toggled_state,
+                    "target": target_text,
+                    "cn": row["cn"],
+                    "en": row["en"],
+                    "notes": notes_text,
+                    "needs_context": needs_context,
+                }
+                if self.mine_rows.get(key) != new_item:
+                    changed_rows += 1
+                self.mine_rows[key] = new_item
+        finally:
+            self.table.setUpdatesEnabled(True)
+        if changed_rows == 0:
+            return
+        self._sync_repo_overlays(reload_model=True)
+        if self.current_id:
+            latest = self.repo.get_row(self.current_id)
+            if latest is not None:
+                self._fill_editor_row(self.current_id, latest)
+                self._refresh_panels(self.current_id, latest["cn"], latest["en"])
 
     def _refresh_panels(self, row_id: str, cn_text: str, en_text: str) -> None:
         if self.conn is None:
