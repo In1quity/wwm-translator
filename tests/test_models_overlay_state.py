@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
+pytest.importorskip("PyQt6.QtGui")
+
 from wwm.gui.models import StringsRepository
 from wwm.overlay import cn_hash
 
