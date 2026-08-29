@@ -42,6 +42,7 @@ class StringsRepository:
         self.mine_overlay: dict[str, dict[str, str]] = {}
         self._search_cache_key: tuple[str, str, bool, str, str, bool] | None = None
         self._search_cache_ids: list[str] = []
+        self._search_cache_index: dict[str, int] = {}
         self._ensure_overlay_temp_table()
 
     def set_overlay(self, overlay: dict[str, dict[str, str]]) -> None:
@@ -60,6 +61,7 @@ class StringsRepository:
     def clear_search_cache(self) -> None:
         self._search_cache_key = None
         self._search_cache_ids = []
+        self._search_cache_index = {}
 
     def count(self, q: QueryState) -> int:
         if self._can_use_sql_state_filter(q):
@@ -251,8 +253,18 @@ class StringsRepository:
         if self._search_cache_key == key:
             return self._search_cache_ids
         self._search_cache_ids = self._compute_search_ids(q)
+        self._search_cache_index = {
+            row_id: idx for idx, row_id in enumerate(self._search_cache_ids)
+        }
         self._search_cache_key = key
         return self._search_cache_ids
+
+    def search_index_of(self, q: QueryState, row_id_lower: str) -> int | None:
+        self._get_search_ids(q)
+        index = self._search_cache_index.get((row_id_lower or "").lower())
+        if index is None:
+            return None
+        return int(index)
 
     def _compute_search_ids(self, q: QueryState) -> list[str]:
         needle = (q.search or "").casefold()
@@ -630,20 +642,17 @@ class StringsTableModel(QAbstractTableModel):
         return ids
 
     def index_of(self, row_id: str) -> int | None:
+        raw_row_id = (row_id or "").strip()
         key = (row_id or "").lower()
-        if not key:
+        if not raw_row_id:
             return None
         for page, chunk in self.cache.items():
             for rel, item in enumerate(chunk):
                 if (item.get("id") or "").lower() == key:
                     return page * self.page_size + rel
         if self.repo._use_materialized_ids(self.q):
-            ids = self.repo._get_search_ids(self.q)
-            try:
-                return ids.index(key)
-            except ValueError:
-                return None
-        fast = self._index_of_by_sql(key)
+            return self.repo.search_index_of(self.q, key)
+        fast = self._index_of_by_sql(raw_row_id)
         if fast is not None:
             return fast
         for idx in range(self.total):
@@ -652,7 +661,7 @@ class StringsTableModel(QAbstractTableModel):
                 return idx
         return None
 
-    def _index_of_by_sql(self, row_id_lower: str) -> int | None:
+    def _index_of_by_sql(self, row_id: str) -> int | None:
         if self.q.search:
             return None
         if self.q.sort_by != "id":
@@ -664,21 +673,33 @@ class StringsTableModel(QAbstractTableModel):
                 return None
             where = _append_sql_state_clause(where, self.q.state)
 
-        exists_where = f"{where} AND lower(s.id) = ?" if where else "WHERE lower(s.id) = ?"
+        exists_where = (
+            f"{where} AND s.id = ? COLLATE NOCASE"
+            if where
+            else "WHERE s.id = ? COLLATE NOCASE"
+        )
         exists = self.repo.conn.execute(
             f"SELECT 1 FROM strings s {exists_where} LIMIT 1",
-            (*params, row_id_lower),
+            (*params, row_id),
         ).fetchone()
         if exists is None:
             return None
 
         if self.q.sort_desc:
-            rank_where = f"{where} AND lower(s.id) > ?" if where else "WHERE lower(s.id) > ?"
+            rank_where = (
+                f"{where} AND s.id > ? COLLATE NOCASE"
+                if where
+                else "WHERE s.id > ? COLLATE NOCASE"
+            )
         else:
-            rank_where = f"{where} AND lower(s.id) < ?" if where else "WHERE lower(s.id) < ?"
+            rank_where = (
+                f"{where} AND s.id < ? COLLATE NOCASE"
+                if where
+                else "WHERE s.id < ? COLLATE NOCASE"
+            )
         row = self.repo.conn.execute(
             f"SELECT COUNT(*) FROM strings s {rank_where}",
-            (*params, row_id_lower),
+            (*params, row_id),
         ).fetchone()
         return int(row[0] if row else 0)
 

@@ -9,7 +9,6 @@ from .render_preview import render_text_to_html
 
 PLACEHOLDER_RE = re.compile(r"\{[^{}]+\}")
 LINK_TAG_RE = re.compile(r"<[^<>|]+\|[^<>|]+\|[^<>|]+\|[^<>|]+>")
-FORBIDDEN_XML_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9_:-]*>")
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 ERROR_CODE_RUSSIAN_AFTER_HASH = "01"
@@ -20,6 +19,88 @@ ERROR_CODE_UNBALANCED_BRACES = "05"
 ERROR_CODE_CLOSING_BRACE_WITHOUT_OPENING = "06"
 ERROR_CODE_OPENING_BRACE_WITHOUT_CLOSING = "07"
 ERROR_CODE_FORBIDDEN_XML_TAG = "08"
+
+SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
+
+QA_RULE_META: dict[str, dict[str, str]] = {
+    "placeholder_mismatch": {
+        "category": "structure",
+        "title": "Placeholder mismatch",
+    },
+    "link_tag_count_mismatch": {
+        "category": "tags",
+        "title": "Link tag count mismatch",
+    },
+    "xml_tag_forbidden": {
+        "category": "tags",
+        "title": "Forbidden XML-like tag",
+    },
+    "target_equals_en": {
+        "category": "language",
+        "title": "Target equals EN source",
+    },
+    "target_has_cjk": {
+        "category": "language",
+        "title": "Unexpected CJK in target",
+    },
+    "glossary_term_missing": {
+        "category": "glossary",
+        "title": "Missing strict glossary term",
+    },
+    "broken_tag": {
+        "category": "render",
+        "title": "Rendered preview warning",
+    },
+    "cn_multiple_target_variants": {
+        "category": "consistency",
+        "title": "CN has multiple target variants",
+    },
+}
+
+ERROR_CODE_META: dict[str, str] = {
+    ERROR_CODE_RUSSIAN_AFTER_HASH: "Cyrillic text starts immediately after '#' marker.",
+    ERROR_CODE_CLOSING_TAG_WITHOUT_OPENING: "Closing tag appears without matching opening tag.",
+    ERROR_CODE_OPENING_TAG_WITHOUT_CLOSING: "Opening tag appears without matching closing tag.",
+    ERROR_CODE_LINK_TAG_INVALID: "Broken or mismatched game link tag structure.",
+    ERROR_CODE_UNBALANCED_BRACES: "Placeholder sets differ between source and target.",
+    ERROR_CODE_CLOSING_BRACE_WITHOUT_OPENING: (
+        "Closing brace appears without matching opening brace."
+    ),
+    ERROR_CODE_OPENING_BRACE_WITHOUT_CLOSING: (
+        "Opening brace appears without matching closing brace."
+    ),
+    ERROR_CODE_FORBIDDEN_XML_TAG: "Raw XML-like tags are not allowed in translation text.",
+    "same CN has multiple target variants": (
+        "Identical CN source text has multiple target translation variants."
+    ),
+    "target equals en": "Target text is identical to EN source.",
+    "target contains chinese": "Target text still contains CJK characters.",
+    "opening color tag without #E": "Color tag is opened but never closed with #E.",
+    "closing #E without open tag": "Closing #E appears without an opening color tag.",
+    "closing $E without open $S": "Closing $E appears without an opening $S.",
+    "opening $S without closing $E": "Conditional block starts with $S but never closes with $E.",
+    "opening < link tag without closing >": "Link tag starts with '<' but has no closing '>'.",
+}
+
+
+def qa_rule_category(rule: str) -> str:
+    return QA_RULE_META.get(rule, {}).get("category", "other")
+
+
+def qa_rule_title(rule: str) -> str:
+    return QA_RULE_META.get(rule, {}).get("title", rule.replace("_", " "))
+
+
+def qa_detail_message(detail: str) -> str:
+    if not detail:
+        return ""
+    if detail.startswith("unknown tag #"):
+        return "Unknown # tag marker in text."
+    return ERROR_CODE_META.get(detail, detail)
+
+
+def qa_severity_rank(severity: str) -> int:
+    return SEVERITY_ORDER.get((severity or "").strip().lower(), 99)
 
 
 def check_row(
@@ -150,10 +231,11 @@ def _check_tags(
 def _check_forbidden_xml_tags(
     payload: list[tuple[str, str, str, str]], row_id: str, target: str
 ) -> None:
-    bad = FORBIDDEN_XML_TAG_RE.search(target or "")
-    if bad is None:
+    for token in _iter_angle_tokens(target or ""):
+        if _is_allowed_param_link_tag(token):
+            continue
+        payload.append((row_id, "xml_tag_forbidden", "error", ERROR_CODE_FORBIDDEN_XML_TAG))
         return
-    payload.append((row_id, "xml_tag_forbidden", "error", ERROR_CODE_FORBIDDEN_XML_TAG))
 
 
 def _check_lang(
@@ -186,7 +268,7 @@ def _check_glossary(
 def _check_render_tags(payload: list[tuple[str, str, str, str]], row_id: str, target: str) -> None:
     _html, warnings = render_text_to_html(target or "")
     for warning in warnings:
-        payload.append((row_id, "broken_tag", "warning", warning))
+        payload.append((row_id, "broken_tag", _render_warning_severity(warning), warning))
 
 
 def _field(item: Any, key: str, index: int) -> str:
@@ -197,6 +279,45 @@ def _field(item: Any, key: str, index: int) -> str:
     if isinstance(item, tuple | list) and len(item) > index:
         return str(item[index] or "")
     return ""
+
+
+def _render_warning_severity(message: str) -> str:
+    text = (message or "").strip().lower()
+    critical_markers = (
+        "without open",
+        "without closing",
+        "opening color tag without #e",
+        "opening < link tag without closing >",
+    )
+    if any(marker in text for marker in critical_markers):
+        return "error"
+    return "warning"
+
+
+def _iter_angle_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    stack: list[int] = []
+    for idx, ch in enumerate(text):
+        if ch == "<":
+            stack.append(idx)
+            continue
+        if ch != ">" or not stack:
+            continue
+        start = stack.pop()
+        tokens.append(text[start : idx + 1])
+    return tokens
+
+
+def _is_allowed_param_link_tag(token: str) -> bool:
+    if not token.startswith("<") or not token.endswith(">"):
+        return False
+    inner = token[1:-1]
+    if not inner or "<" in inner or ">" in inner:
+        return False
+    parts = inner.split("|")
+    if len(parts) != 4:
+        return False
+    return all(part.strip() != "" for part in parts)
 
 
 def _add_cn_conflicts(conn, overlay: dict[str, dict[str, str]]) -> None:
@@ -231,7 +352,7 @@ def _add_cn_conflicts(conn, overlay: dict[str, dict[str, str]]) -> None:
             (
                 row["id"],
                 "cn_multiple_target_variants",
-                "warning",
+                "info",
                 "same CN has multiple target variants",
             )
         )

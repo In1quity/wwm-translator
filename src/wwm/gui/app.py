@@ -67,7 +67,14 @@ from ..project import (
     load_recent_projects,
     open_project,
 )
-from ..qa import check_row_into_db, run_qa, run_qa_on_map
+from ..qa import (
+    check_row_into_db,
+    qa_detail_message,
+    qa_rule_category,
+    qa_rule_title,
+    run_qa,
+    run_qa_on_map,
+)
 from ..tm import rebuild_tm
 from ..version import detect_client_version
 from .models import QueryState, StringsRepository, StringsTableModel
@@ -283,6 +290,7 @@ class MainWindow(QMainWindow):
         self._qa_worker: QAWorker | None = None
         self._qa_progress: QProgressDialog | None = None
         self._keep_qa_overview_on_row_sync = False
+        self._deferred_panel_refresh_row_id: str | None = None
 
         self.setWindowTitle("WWM Translator")
         self.resize(1800, 1000)
@@ -839,21 +847,38 @@ class MainWindow(QMainWindow):
 
     def _fill_row_qa_panel(self, row_id: str) -> int:
         self.qa_tree.clear()
-        grouped: dict[str, list[tuple[str, str]]] = defaultdict(list)
-        for rule, severity, detail in fill_qa_panel(self.conn, row_id):
-            grouped[rule].append((severity, detail))
+        grouped: dict[str, dict[str, list[tuple[str, str, str]]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        for issue in fill_qa_panel(self.conn, row_id):
+            rule = str(issue.get("rule", ""))
+            severity = str(issue.get("severity", ""))
+            detail = str(issue.get("detail", ""))
+            detail_message = str(issue.get("detail_message", "") or detail)
+            category = str(issue.get("category", "other"))
+            grouped[category][rule].append((severity, detail, detail_message))
 
         total = 0
-        for rule in sorted(grouped):
-            issues = grouped[rule]
-            parent = QTreeWidgetItem([f"{rule} ({len(issues)})", ""])
-            parent.setExpanded(True)
-            for severity, detail in issues:
-                child = QTreeWidgetItem(["", f"{severity} | {detail}"])
-                child.setData(0, Qt.ItemDataRole.UserRole, row_id)
-                parent.addChild(child)
-                total += 1
-            self.qa_tree.addTopLevelItem(parent)
+        for category in sorted(grouped):
+            category_groups = grouped[category]
+            category_total = sum(len(items) for items in category_groups.values())
+            category_label = category.replace("_", " ").title()
+            category_node = QTreeWidgetItem([f"{category_label} ({category_total})", ""])
+            category_node.setExpanded(True)
+            for rule in sorted(category_groups):
+                issues = category_groups[rule]
+                rule_node = QTreeWidgetItem([f"{qa_rule_title(rule)} ({len(issues)})", ""])
+                rule_node.setExpanded(True)
+                for severity, detail, detail_message in issues:
+                    pretty_detail = detail_message
+                    if detail and detail_message != detail:
+                        pretty_detail = f"{detail} | {detail_message}"
+                    child = QTreeWidgetItem(["", f"{severity} | {pretty_detail}"])
+                    child.setData(0, Qt.ItemDataRole.UserRole, row_id)
+                    rule_node.addChild(child)
+                    total += 1
+                category_node.addChild(rule_node)
+            self.qa_tree.addTopLevelItem(category_node)
         return total
 
     def _show_qa_overview_panel(self) -> None:
@@ -863,6 +888,9 @@ class MainWindow(QMainWindow):
         self.qa_tree.clear()
         for bucket in fill_qa_overview_panel(self.conn, per_rule_limit=300):
             rule = str(bucket.get("rule", ""))
+            rule_title = str(bucket.get("rule_title", qa_rule_title(rule)))
+            category = str(bucket.get("category", qa_rule_category(rule)))
+            category_label = category.replace("_", " ").title()
             severity = str(bucket.get("severity", ""))
             total = int(bucket.get("total", 0) or 0)
             items = bucket.get("items", [])
@@ -870,11 +898,15 @@ class MainWindow(QMainWindow):
                 items = []
             shown = len(items)
             suffix = f"{shown}/{total}" if shown < total else str(total)
-            parent = QTreeWidgetItem([f"{severity} | {rule} ({suffix})", ""])
+            title = f"{severity} | {category_label} | {rule_title} ({suffix})"
+            parent = QTreeWidgetItem([title, ""])
             parent.setExpanded(False)
-            for issue_row_id, detail in items:
+            for issue_row_id, detail, detail_message in items:
                 issue_row = str(issue_row_id)
-                child = QTreeWidgetItem([issue_row, str(detail)])
+                pretty_detail = str(detail_message or detail)
+                if detail and detail_message and str(detail) != str(detail_message):
+                    pretty_detail = f"{detail} | {detail_message}"
+                child = QTreeWidgetItem([issue_row, pretty_detail])
                 child.setData(0, Qt.ItemDataRole.UserRole, issue_row)
                 parent.addChild(child)
             self.qa_tree.addTopLevelItem(parent)
@@ -923,12 +955,13 @@ class MainWindow(QMainWindow):
         self._on_row(idx)
 
     def _on_qa_item_click(self, item: QTreeWidgetItem, _column: int) -> None:
-        if self.model is None:
+        if self.model is None or self.repo is None:
             return
         target_row_id = item.data(0, Qt.ItemDataRole.UserRole)
         if not target_row_id:
             return
-        self.model.set_qa_highlight_row(str(target_row_id))
+        target_row_id = str(target_row_id)
+        self.model.set_qa_highlight_row(target_row_id)
         # Keep grouped overview visible when navigating from QA tree to table row.
         self._keep_qa_overview_on_row_sync = True
         model_index = self.model.index_of(target_row_id)
@@ -942,11 +975,26 @@ class MainWindow(QMainWindow):
         idx = self.model.index(model_index, 2)
         self.table.selectRow(model_index)
         self.table.scrollTo(idx)
-        self._on_row(idx)
+        if self.current_id and self.current_id != target_row_id:
+            self._persist_current_row()
+        row = self.repo.get_row(target_row_id)
+        if row is None:
+            return
+        self._fill_editor_row(target_row_id, row)
+        self._deferred_panel_refresh_row_id = target_row_id
 
     def _on_tab_changed(self, tab_index: int) -> None:
         qa_tab_index = self.tabs.indexOf(self.qa_tab)
         if tab_index != qa_tab_index:
+            if (
+                self._deferred_panel_refresh_row_id
+                and self.repo is not None
+                and self.current_id == self._deferred_panel_refresh_row_id
+            ):
+                row = self.repo.get_row(self.current_id)
+                if row is not None:
+                    self._refresh_panels(self.current_id, row["cn"], row["en"])
+                self._deferred_panel_refresh_row_id = None
             return
         if self.conn is None:
             return
@@ -1411,7 +1459,10 @@ class MainWindow(QMainWindow):
             for _row_id, _rule, _severity, _detail, source in critical_items:
                 source_critical[source] = source_critical.get(source, 0) + 1
             preview = "\n".join(
-                f"{row_id} | {rule} | {detail} | source={source.upper()}"
+                (
+                    f"{row_id} | {qa_rule_title(rule)} | "
+                    f"{qa_detail_message(detail)} | source={source.upper()}"
+                )
                 for row_id, rule, _severity, detail, source in critical_items[:20]
             )
             reply = QMessageBox.question(

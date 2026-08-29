@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from ..qa import qa_detail_message, qa_rule_category, qa_rule_title, qa_severity_rank
 from ..render_preview import render_text_to_html
 from ..tm import exact_candidates, fuzzy_candidates, preview_same_cn
 
@@ -100,12 +101,35 @@ def fill_glossary_panel(
     return out
 
 
-def fill_qa_panel(conn: sqlite3.Connection, row_id: str) -> list[tuple[str, str, str]]:
+def fill_qa_panel(conn: sqlite3.Connection, row_id: str) -> list[dict[str, str]]:
     rows = conn.execute(
         "SELECT rule, severity, detail FROM qa_issues WHERE id = ? ORDER BY severity DESC, rule",
         (row_id,),
     ).fetchall()
-    return [(row["rule"], row["severity"], row["detail"]) for row in rows]
+    out: list[dict[str, str]] = []
+    for row in rows:
+        rule = str(row["rule"] or "")
+        severity = str(row["severity"] or "")
+        detail = str(row["detail"] or "")
+        out.append(
+            {
+                "rule": rule,
+                "rule_title": qa_rule_title(rule),
+                "category": qa_rule_category(rule),
+                "severity": severity,
+                "detail": detail,
+                "detail_message": qa_detail_message(detail),
+            }
+        )
+    out.sort(
+        key=lambda item: (
+            qa_severity_rank(item.get("severity", "")),
+            item.get("category", ""),
+            item.get("rule_title", ""),
+            item.get("detail_message", ""),
+        )
+    )
+    return out
 
 
 def fill_qa_overview_panel(
@@ -127,6 +151,8 @@ def fill_qa_overview_panel(
     ).fetchall()
     out: list[dict[str, object]] = []
     for group in groups:
+        rule = str(group["rule"] or "")
+        severity = str(group["severity"] or "")
         rows = conn.execute(
             """
             SELECT q.id, q.detail
@@ -135,16 +161,33 @@ def fill_qa_overview_panel(
             ORDER BY q.id
             LIMIT ?
             """,
-            (group["rule"], group["severity"], per_rule_limit),
+            (rule, severity, per_rule_limit),
         ).fetchall()
+        decoded_items = [
+            (
+                str(row["id"] or ""),
+                str(row["detail"] or ""),
+                qa_detail_message(str(row["detail"] or "")),
+            )
+            for row in rows
+        ]
         out.append(
             {
-                "rule": group["rule"],
-                "severity": group["severity"],
+                "rule": rule,
+                "rule_title": qa_rule_title(rule),
+                "category": qa_rule_category(rule),
+                "severity": severity,
                 "total": int(group["total"] or 0),
-                "items": [(row["id"], row["detail"]) for row in rows],
+                "items": decoded_items,
             }
         )
+    out.sort(
+        key=lambda item: (
+            qa_severity_rank(str(item.get("severity", ""))),
+            str(item.get("category", "")),
+            str(item.get("rule_title", "")),
+        )
+    )
     return out
 
 
