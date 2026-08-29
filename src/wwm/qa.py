@@ -9,7 +9,10 @@ from .render_preview import render_text_to_html
 
 PLACEHOLDER_RE = re.compile(r"\{[^{}]+\}")
 LINK_TAG_RE = re.compile(r"<[^<>|]+\|[^<>|]+\|[^<>|]+\|[^<>|]+>")
+SINGLE_COLOR_TAG_RE = re.compile(r"#([A-Za-z])(?![A-Za-z0-9])")
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_ALLOWED_CN_TAGS_CACHE: dict[str, set[str]] = {}
+_ALLOWED_CN_COLOR_TAGS_CACHE: dict[str, set[str]] = {}
 
 ERROR_CODE_RUSSIAN_AFTER_HASH = "01"
 ERROR_CODE_CLOSING_TAG_WITHOUT_OPENING = "02"
@@ -19,6 +22,8 @@ ERROR_CODE_UNBALANCED_BRACES = "05"
 ERROR_CODE_CLOSING_BRACE_WITHOUT_OPENING = "06"
 ERROR_CODE_OPENING_BRACE_WITHOUT_CLOSING = "07"
 ERROR_CODE_FORBIDDEN_XML_TAG = "08"
+ERROR_CODE_COLOR_TAG_FORBIDDEN = "09"
+ERROR_CODE_SINGLE_ANGLE_TAG_SUSPECT = "10"
 
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
 
@@ -34,6 +39,14 @@ QA_RULE_META: dict[str, dict[str, str]] = {
     "xml_tag_forbidden": {
         "category": "tags",
         "title": "Forbidden XML-like tag",
+    },
+    "angle_tag_suspect": {
+        "category": "tags",
+        "title": "Single angle tag needs review",
+    },
+    "color_tag_forbidden": {
+        "category": "tags",
+        "title": "Forbidden single-letter color tag",
     },
     "target_equals_en": {
         "category": "language",
@@ -70,6 +83,10 @@ ERROR_CODE_META: dict[str, str] = {
         "Opening brace appears without matching closing brace."
     ),
     ERROR_CODE_FORBIDDEN_XML_TAG: "Raw XML-like tags are not allowed in translation text.",
+    ERROR_CODE_COLOR_TAG_FORBIDDEN: "Single-letter color code is not allowed for this CN set.",
+    ERROR_CODE_SINGLE_ANGLE_TAG_SUSPECT: (
+        "Single angle-bracket tag may be valid term markup; review manually."
+    ),
     "same CN has multiple target variants": (
         "Identical CN source text has multiple target translation variants."
     ),
@@ -111,10 +128,33 @@ def check_row(
     glossary_rows: list[Any],
     target_lang: str = "",
 ) -> list[tuple[str, str, str, str]]:
+    return _check_row_with_allowed_tags(
+        row_id=row_id,
+        cn=cn,
+        en=en,
+        target=target,
+        glossary_rows=glossary_rows,
+        target_lang=target_lang,
+        allowed_tag_names=_extract_tag_names(cn or ""),
+        allowed_color_tags=_extract_single_color_tags(cn or ""),
+    )
+
+
+def _check_row_with_allowed_tags(
+    row_id: str,
+    cn: str,
+    en: str,
+    target: str,
+    glossary_rows: list[Any],
+    target_lang: str,
+    allowed_tag_names: set[str],
+    allowed_color_tags: set[str],
+) -> list[tuple[str, str, str, str]]:
     payload: list[tuple[str, str, str, str]] = []
     _check_placeholders(payload, row_id, cn, target)
     _check_tags(payload, row_id, cn, target)
-    _check_forbidden_xml_tags(payload, row_id, target)
+    _check_forbidden_xml_tags(payload, row_id, cn, target, allowed_tag_names)
+    _check_single_letter_color_tags(payload, row_id, cn, target, allowed_color_tags)
     _check_lang(payload, row_id, en, target, target_lang)
     _check_glossary(payload, row_id, cn, en, target, glossary_rows)
     _check_render_tags(payload, row_id, target)
@@ -124,6 +164,8 @@ def check_row(
 def run_qa(db_path, overlay: dict[str, dict[str, str]], target_lang: str) -> dict[str, int]:
     conn = open_db(db_path)
     conn.execute("DELETE FROM qa_issues")
+    allowed_tag_names = _collect_allowed_cn_tag_names(conn)
+    allowed_color_tags = _collect_allowed_cn_single_color_tags(conn)
     rows = conn.execute("SELECT id, cn, en, target_official FROM strings")
     glossary = conn.execute("SELECT cn, en, target FROM glossary WHERE strict = 1").fetchall()
     payload: list[tuple[str, str, str, str]] = []
@@ -134,7 +176,20 @@ def run_qa(db_path, overlay: dict[str, dict[str, str]], target_lang: str) -> dic
         target = row["target_official"] or ""
         if item and item.get("cn_hash", "") == cn_hash(row["cn"] or ""):
             target = item.get("target", "")
-        payload.extend(check_row(row["id"], row["cn"], row["en"], target, glossary, target_lang))
+        row_allowed_tags = _extract_tag_names(row["cn"] or "") | allowed_tag_names
+        row_allowed_colors = _extract_single_color_tags(row["cn"] or "") | allowed_color_tags
+        payload.extend(
+            _check_row_with_allowed_tags(
+                row_id=row["id"],
+                cn=row["cn"],
+                en=row["en"],
+                target=target,
+                glossary_rows=glossary,
+                target_lang=target_lang,
+                allowed_tag_names=row_allowed_tags,
+                allowed_color_tags=row_allowed_colors,
+            )
+        )
         if len(payload) >= 2000:
             conn.executemany(
                 "INSERT OR REPLACE INTO qa_issues(id, rule, severity, detail) VALUES(?, ?, ?, ?)",
@@ -166,11 +221,24 @@ def check_row_into_db(
     if row is None:
         return {"rows": 0, "issues": 0}
     glossary = conn.execute("SELECT cn, en, target FROM glossary WHERE strict = 1").fetchall()
+    allowed_tag_names = _collect_allowed_cn_tag_names(conn)
+    allowed_color_tags = _collect_allowed_cn_single_color_tags(conn)
     item = overlay.get((row["id"] or "").lower())
     target = row["target_official"] or ""
     if item and item.get("cn_hash", "") == cn_hash(row["cn"] or ""):
         target = item.get("target", "")
-    payload = check_row(row["id"], row["cn"], row["en"], target, glossary, target_lang)
+    row_allowed_tags = _extract_tag_names(row["cn"] or "") | allowed_tag_names
+    row_allowed_colors = _extract_single_color_tags(row["cn"] or "") | allowed_color_tags
+    payload = _check_row_with_allowed_tags(
+        row_id=row["id"],
+        cn=row["cn"],
+        en=row["en"],
+        target=target,
+        glossary_rows=glossary,
+        target_lang=target_lang,
+        allowed_tag_names=row_allowed_tags,
+        allowed_color_tags=row_allowed_colors,
+    )
     conn.execute("DELETE FROM qa_issues WHERE id = ?", (row_id,))
     if payload:
         conn.executemany(
@@ -189,6 +257,8 @@ def run_qa_on_map(
 ) -> dict[str, object]:
     glossary = conn.execute("SELECT cn, en, target FROM glossary WHERE strict = 1").fetchall()
     rows = conn.execute("SELECT id, cn, en FROM strings").fetchall()
+    allowed_tag_names = _collect_allowed_cn_tag_names(conn)
+    allowed_color_tags = _collect_allowed_cn_single_color_tags(conn)
     payload: list[tuple[str, str, str, str]] = []
     source_totals = {"master": 0, "official": 0, "empty": 0}
     for row in rows:
@@ -197,7 +267,20 @@ def run_qa_on_map(
         source = (source_map or {}).get(row_id, "unknown")
         if source in source_totals:
             source_totals[source] += 1
-        payload.extend(check_row(row["id"], row["cn"], row["en"], target, glossary, target_lang))
+        row_allowed_tags = _extract_tag_names(row["cn"] or "") | allowed_tag_names
+        row_allowed_colors = _extract_single_color_tags(row["cn"] or "") | allowed_color_tags
+        payload.extend(
+            _check_row_with_allowed_tags(
+                row_id=row["id"],
+                cn=row["cn"],
+                en=row["en"],
+                target=target,
+                glossary_rows=glossary,
+                target_lang=target_lang,
+                allowed_tag_names=row_allowed_tags,
+                allowed_color_tags=row_allowed_colors,
+            )
+        )
     critical = [item for item in payload if item[2] == "error"]
     critical_items_with_source: list[tuple[str, str, str, str, str]] = []
     for row_id, rule, severity, detail in critical[:100]:
@@ -229,13 +312,50 @@ def _check_tags(
 
 
 def _check_forbidden_xml_tags(
-    payload: list[tuple[str, str, str, str]], row_id: str, target: str
+    payload: list[tuple[str, str, str, str]],
+    row_id: str,
+    cn: str,
+    target: str,
+    allowed_tag_names: set[str] | None = None,
 ) -> None:
+    cn_tag_names = _extract_tag_names(cn or "")
+    if allowed_tag_names:
+        cn_tag_names |= allowed_tag_names
     for token in _iter_angle_tokens(target or ""):
+        # Link-like angle tags are validated by link_tag_count_mismatch;
+        # do not duplicate them as forbidden XML-like tags.
+        if "|" in token:
+            continue
         if _is_allowed_param_link_tag(token):
+            continue
+        tag_name = _extract_tag_name(token)
+        if tag_name is None:
+            payload.append(
+                (row_id, "angle_tag_suspect", "warning", ERROR_CODE_SINGLE_ANGLE_TAG_SUSPECT)
+            )
+            return
+        if tag_name and tag_name in cn_tag_names:
             continue
         payload.append((row_id, "xml_tag_forbidden", "error", ERROR_CODE_FORBIDDEN_XML_TAG))
         return
+
+
+def _check_single_letter_color_tags(
+    payload: list[tuple[str, str, str, str]],
+    row_id: str,
+    cn: str,
+    target: str,
+    allowed_color_tags: set[str],
+) -> None:
+    row_colors = _extract_single_color_tags(cn or "")
+    allow = {tag.upper() for tag in allowed_color_tags} | {tag.upper() for tag in row_colors}
+    for tag in _extract_single_color_tags(target or ""):
+        upper = tag.upper()
+        if upper == "E":
+            continue
+        if upper not in allow:
+            payload.append((row_id, "color_tag_forbidden", "error", ERROR_CODE_COLOR_TAG_FORBIDDEN))
+            return
 
 
 def _check_lang(
@@ -308,6 +428,30 @@ def _iter_angle_tokens(text: str) -> list[str]:
     return tokens
 
 
+def _extract_tag_name(token: str) -> str | None:
+    match = re.fullmatch(
+        r"<\s*/?\s*([A-Za-z][A-Za-z0-9_:\-]*)\b[^>]*>",
+        token.strip(),
+    )
+    if match is None:
+        return None
+    return str(match.group(1))
+
+
+def _extract_tag_names(text: str) -> set[str]:
+    names: set[str] = set()
+    for token in _iter_angle_tokens(text):
+        tag_name = _extract_tag_name(token)
+        if tag_name:
+            names.add(tag_name)
+    return names
+
+
+def _extract_single_color_tags(text: str) -> set[str]:
+    tags = {tag.upper() for tag in SINGLE_COLOR_TAG_RE.findall(text or "")}
+    return {tag for tag in tags if tag != "E"}
+
+
 def _is_allowed_param_link_tag(token: str) -> bool:
     if not token.startswith("<") or not token.endswith(">"):
         return False
@@ -318,6 +462,40 @@ def _is_allowed_param_link_tag(token: str) -> bool:
     if len(parts) != 4:
         return False
     return all(part.strip() != "" for part in parts)
+
+
+def _db_main_path(conn) -> str:
+    row = conn.execute("PRAGMA database_list").fetchone()
+    if row is None:
+        return ""
+    try:
+        return str(row[2] or "")
+    except Exception:
+        return ""
+
+
+def _collect_allowed_cn_tag_names(conn) -> set[str]:
+    cache_key = _db_main_path(conn)
+    if cache_key and cache_key in _ALLOWED_CN_TAGS_CACHE:
+        return _ALLOWED_CN_TAGS_CACHE[cache_key]
+    names: set[str] = set()
+    for row in conn.execute("SELECT cn FROM strings WHERE cn LIKE '%<%'"):
+        names |= _extract_tag_names(str(row["cn"] or ""))
+    if cache_key:
+        _ALLOWED_CN_TAGS_CACHE[cache_key] = names
+    return names
+
+
+def _collect_allowed_cn_single_color_tags(conn) -> set[str]:
+    cache_key = _db_main_path(conn)
+    if cache_key and cache_key in _ALLOWED_CN_COLOR_TAGS_CACHE:
+        return _ALLOWED_CN_COLOR_TAGS_CACHE[cache_key]
+    tags: set[str] = set()
+    for row in conn.execute("SELECT cn FROM strings WHERE cn LIKE '%#%'"):
+        tags |= _extract_single_color_tags(str(row["cn"] or ""))
+    if cache_key:
+        _ALLOWED_CN_COLOR_TAGS_CACHE[cache_key] = tags
+    return tags
 
 
 def _add_cn_conflicts(conn, overlay: dict[str, dict[str, str]]) -> None:

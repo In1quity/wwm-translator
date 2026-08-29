@@ -1,7 +1,7 @@
 {
   "name": "wwm-translator",
   "private": true,
-  "version": "0.1.28",
+  "version": "0.1.29",
   "description": "Repository quality tooling for WWM Translator",
   "engines": {
     "node": ">=20"

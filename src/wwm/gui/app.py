@@ -291,6 +291,7 @@ class MainWindow(QMainWindow):
         self._qa_progress: QProgressDialog | None = None
         self._keep_qa_overview_on_row_sync = False
         self._deferred_panel_refresh_row_id: str | None = None
+        self._qa_tab_needs_refresh = False
 
         self.setWindowTitle("WWM Translator")
         self.resize(1800, 1000)
@@ -998,11 +999,8 @@ class MainWindow(QMainWindow):
             return
         if self.conn is None:
             return
-        if self._has_row_selection() and self.current_id:
-            row_issues = self._fill_row_qa_panel(self.current_id)
-            if row_issues > 0:
-                return
-        self._show_qa_overview_panel()
+        if self._qa_tab_needs_refresh or self.qa_tree.topLevelItemCount() == 0:
+            self._reload_qa_tab_view()
 
     def _approve_current_row(self) -> None:
         if self.current_id is None or self.model is None:
@@ -1205,16 +1203,15 @@ class MainWindow(QMainWindow):
         if not isinstance(result_obj, dict):
             QMessageBox.critical(self, "QA failed", "Invalid QA result returned.")
             return
+        self._qa_tab_needs_refresh = True
         QMessageBox.information(
             self,
             "QA",
             f"Rows: {result_obj.get('rows', 0)}\nIssues: {result_obj.get('issues', 0)}",
         )
-        if self.current_id and self._has_row_selection():
-            self._on_row()
-            if self._qa_issue_count() > 0:
-                return
-        self._show_qa_overview_panel()
+        qa_tab_index = self.tabs.indexOf(self.qa_tab)
+        if self.tabs.currentIndex() == qa_tab_index:
+            self._reload_qa_tab_view()
 
     def _qa_issue_count(self) -> int:
         total = 0
@@ -1222,6 +1219,17 @@ class MainWindow(QMainWindow):
             parent = self.qa_tree.topLevelItem(idx)
             total += parent.childCount()
         return total
+
+    def _reload_qa_tab_view(self) -> None:
+        if self.conn is None:
+            return
+        self.qa_tree.clear()
+        self._qa_tab_needs_refresh = False
+        if self._has_row_selection() and self.current_id:
+            row_issues = self._fill_row_qa_panel(self.current_id)
+            if row_issues > 0:
+                return
+        self._show_qa_overview_panel()
 
     def _cleanup_qa_runner(self) -> None:
         if self._qa_worker is not None:
