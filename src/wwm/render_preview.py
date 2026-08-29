@@ -6,6 +6,7 @@ COLOR_TAGS = {
     "Y": "#F4D35E",
     "G": "#8EE08E",
     "D": "#C8A2FF",
+    "H": "#FF9F1C",
 }
 _DOLLAR_VAR_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_:.+-")
 _DOLLAR_CONTROL_MARKERS = {"S", "E", "P", "N"}

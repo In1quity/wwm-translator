@@ -87,3 +87,10 @@ def test_render_supports_p_and_n_control_markers() -> None:
     assert "当前效果" in html
     assert "突破预览" in html
     assert not warnings
+
+
+def test_render_supports_h_color_tag() -> None:
+    html, warnings = render_text_to_html("Нажмите #Hбыстрый предмет#E")
+    assert "color:#FF9F1C" in html
+    assert "быстрый предмет" in html
+    assert not warnings
