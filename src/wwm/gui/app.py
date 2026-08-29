@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 from PyQt6.QtCore import QModelIndex, QObject, QRegularExpression, Qt, QThread, pyqtSignal
@@ -40,6 +41,8 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QTextBrowser,
     QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -269,7 +272,6 @@ class MainWindow(QMainWindow):
         self._pending_export_overlay: dict[str, dict[str, str]] = {}
         self._loading_row = False
         self._selection_snapshot: list[tuple[str, int]] = []
-        self._qa_issue_row_ids: dict[int, str] = {}
         self._project_thread: QThread | None = None
         self._project_worker: ProjectOpenWorker | None = None
         self._project_progress: QProgressDialog | None = None
@@ -280,6 +282,7 @@ class MainWindow(QMainWindow):
         self._qa_thread: QThread | None = None
         self._qa_worker: QAWorker | None = None
         self._qa_progress: QProgressDialog | None = None
+        self._keep_qa_overview_on_row_sync = False
 
         self.setWindowTitle("WWM Translator")
         self.resize(1800, 1000)
@@ -408,9 +411,11 @@ class MainWindow(QMainWindow):
         self.qa_show_all_btn = QPushButton("Show all errors")
         self.qa_show_all_btn.clicked.connect(self._show_qa_overview_panel)
         qa_layout.addWidget(self.qa_show_all_btn)
-        self.qa_list = QListWidget()
-        self.qa_list.itemClicked.connect(self._on_qa_item_click)
-        qa_layout.addWidget(self.qa_list, 1)
+        self.qa_tree = QTreeWidget()
+        self.qa_tree.setHeaderLabels(["Rule", "Details"])
+        self.qa_tree.setColumnWidth(0, 360)
+        self.qa_tree.itemClicked.connect(self._on_qa_item_click)
+        qa_layout.addWidget(self.qa_tree, 1)
         self.same_source_list = QListWidget()
         self.same_source_list.itemClicked.connect(self._on_same_source_click)
         self.rendered_preview = QTextBrowser()
@@ -822,7 +827,10 @@ class MainWindow(QMainWindow):
         self.glossary_list.clear()
         for item in fill_glossary_panel(self.conn, cn_text, en_text, self.target.toPlainText()):
             self.glossary_list.addItem(item)
-        self._fill_row_qa_panel(row_id)
+        if self._keep_qa_overview_on_row_sync:
+            self._keep_qa_overview_on_row_sync = False
+        else:
+            self._fill_row_qa_panel(row_id)
         self.same_source_list.clear()
         self._preview_row_ids.clear()
         for index, (item, preview_row_id) in enumerate(fill_same_source_panel(self.conn, row_id)):
@@ -830,22 +838,46 @@ class MainWindow(QMainWindow):
             self._preview_row_ids[index] = preview_row_id
 
     def _fill_row_qa_panel(self, row_id: str) -> int:
-        self.qa_list.clear()
-        self._qa_issue_row_ids.clear()
-        for index, item in enumerate(fill_qa_panel(self.conn, row_id)):
-            self.qa_list.addItem(item)
-            self._qa_issue_row_ids[index] = row_id
-        return self.qa_list.count()
+        self.qa_tree.clear()
+        grouped: dict[str, list[tuple[str, str]]] = defaultdict(list)
+        for rule, severity, detail in fill_qa_panel(self.conn, row_id):
+            grouped[rule].append((severity, detail))
+
+        total = 0
+        for rule in sorted(grouped):
+            issues = grouped[rule]
+            parent = QTreeWidgetItem([f"{rule} ({len(issues)})", ""])
+            parent.setExpanded(True)
+            for severity, detail in issues:
+                child = QTreeWidgetItem(["", f"{severity} | {detail}"])
+                child.setData(0, Qt.ItemDataRole.UserRole, row_id)
+                parent.addChild(child)
+                total += 1
+            self.qa_tree.addTopLevelItem(parent)
+        return total
 
     def _show_qa_overview_panel(self) -> None:
         if self.conn is None:
             return
         self.tabs.setCurrentWidget(self.qa_tab)
-        self.qa_list.clear()
-        self._qa_issue_row_ids.clear()
-        for index, (item, issue_row_id) in enumerate(fill_qa_overview_panel(self.conn, limit=3000)):
-            self.qa_list.addItem(item)
-            self._qa_issue_row_ids[index] = issue_row_id
+        self.qa_tree.clear()
+        for bucket in fill_qa_overview_panel(self.conn, per_rule_limit=300):
+            rule = str(bucket.get("rule", ""))
+            severity = str(bucket.get("severity", ""))
+            total = int(bucket.get("total", 0) or 0)
+            items = bucket.get("items", [])
+            if not isinstance(items, list):
+                items = []
+            shown = len(items)
+            suffix = f"{shown}/{total}" if shown < total else str(total)
+            parent = QTreeWidgetItem([f"{severity} | {rule} ({suffix})", ""])
+            parent.setExpanded(False)
+            for issue_row_id, detail in items:
+                issue_row = str(issue_row_id)
+                child = QTreeWidgetItem([issue_row, str(detail)])
+                child.setData(0, Qt.ItemDataRole.UserRole, issue_row)
+                parent.addChild(child)
+            self.qa_tree.addTopLevelItem(parent)
 
     def _has_row_selection(self) -> bool:
         if self.model is None:
@@ -890,13 +922,15 @@ class MainWindow(QMainWindow):
         self.table.scrollTo(idx)
         self._on_row(idx)
 
-    def _on_qa_item_click(self, item) -> None:
+    def _on_qa_item_click(self, item: QTreeWidgetItem, _column: int) -> None:
         if self.model is None:
             return
-        row_index = self.qa_list.row(item)
-        target_row_id = self._qa_issue_row_ids.get(row_index)
+        target_row_id = item.data(0, Qt.ItemDataRole.UserRole)
         if not target_row_id:
             return
+        self.model.set_qa_highlight_row(str(target_row_id))
+        # Keep grouped overview visible when navigating from QA tree to table row.
+        self._keep_qa_overview_on_row_sync = True
         model_index = self.model.index_of(target_row_id)
         if model_index is None:
             QMessageBox.information(
@@ -1130,9 +1164,16 @@ class MainWindow(QMainWindow):
         )
         if self.current_id and self._has_row_selection():
             self._on_row()
-            if self.qa_list.count() > 0:
+            if self._qa_issue_count() > 0:
                 return
         self._show_qa_overview_panel()
+
+    def _qa_issue_count(self) -> int:
+        total = 0
+        for idx in range(self.qa_tree.topLevelItemCount()):
+            parent = self.qa_tree.topLevelItem(idx)
+            total += parent.childCount()
+        return total
 
     def _cleanup_qa_runner(self) -> None:
         if self._qa_worker is not None:

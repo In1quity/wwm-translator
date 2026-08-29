@@ -100,35 +100,52 @@ def fill_glossary_panel(
     return out
 
 
-def fill_qa_panel(conn: sqlite3.Connection, row_id: str) -> list[str]:
+def fill_qa_panel(conn: sqlite3.Connection, row_id: str) -> list[tuple[str, str, str]]:
     rows = conn.execute(
         "SELECT rule, severity, detail FROM qa_issues WHERE id = ? ORDER BY severity DESC, rule",
         (row_id,),
     ).fetchall()
-    return [f"{row['severity']} | {row['rule']} | {row['detail']}" for row in rows]
+    return [(row["rule"], row["severity"], row["detail"]) for row in rows]
 
 
-def fill_qa_overview_panel(conn: sqlite3.Connection, limit: int = 1000) -> list[tuple[str, str]]:
-    rows = conn.execute(
+def fill_qa_overview_panel(
+    conn: sqlite3.Connection, per_rule_limit: int = 300
+) -> list[dict[str, object]]:
+    groups = conn.execute(
         """
-        SELECT q.id, q.rule, q.severity, q.detail
+        SELECT q.rule, q.severity, COUNT(*) AS total
         FROM qa_issues q
+        GROUP BY q.rule, q.severity
         ORDER BY
             CASE q.severity
                 WHEN 'error' THEN 0
                 WHEN 'warning' THEN 1
                 ELSE 2
             END,
-            q.rule,
-            q.id
-        LIMIT ?
-        """,
-        (limit,),
+            q.rule
+        """
     ).fetchall()
-    return [
-        (f"{row['id']} | {row['severity']} | {row['rule']} | {row['detail']}", row["id"])
-        for row in rows
-    ]
+    out: list[dict[str, object]] = []
+    for group in groups:
+        rows = conn.execute(
+            """
+            SELECT q.id, q.detail
+            FROM qa_issues q
+            WHERE q.rule = ? AND q.severity = ?
+            ORDER BY q.id
+            LIMIT ?
+            """,
+            (group["rule"], group["severity"], per_rule_limit),
+        ).fetchall()
+        out.append(
+            {
+                "rule": group["rule"],
+                "severity": group["severity"],
+                "total": int(group["total"] or 0),
+                "items": [(row["id"], row["detail"]) for row in rows],
+            }
+        )
+    return out
 
 
 def fill_same_source_panel(conn: sqlite3.Connection, source_id: str) -> list[tuple[str, str]]:

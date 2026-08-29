@@ -19,9 +19,7 @@ STATE_COLORS = {
     "outdated": QColor("#8b2d2d"),
     "approved": QColor("#2d6b3c"),
     "rejected": QColor("#6b2d2d"),
-    "official": QColor("#3f3f3f"),
     "official_match": QColor("#5b4a8f"),
-    "untranslated": QColor("#555555"),
     "notranslate": QColor("#4a4a4a"),
     "ours": QColor("#8a7420"),
 }
@@ -524,6 +522,7 @@ class StringsTableModel(QAbstractTableModel):
         self.max_cached_pages = 12
         self.total = 0
         self.cache: OrderedDict[int, list[dict[str, str]]] = OrderedDict()
+        self._qa_highlight_row_id: str | None = None
         self.reload()
 
     def rowCount(self, parent: QModelIndex = _EMPTY_MODEL_INDEX) -> int:  # noqa: N802
@@ -566,7 +565,7 @@ class StringsTableModel(QAbstractTableModel):
             if role == Qt.ItemDataRole.TextAlignmentRole:
                 return int(Qt.AlignmentFlag.AlignCenter)
             if role == Qt.ItemDataRole.BackgroundRole:
-                return STATE_COLORS.get(row["state"], None)
+                return self._background_for_row(row)
             return None
 
         col = HEADERS[column - len(ACTION_HEADERS)]
@@ -580,8 +579,19 @@ class StringsTableModel(QAbstractTableModel):
             if row[col] == "rejected":
                 return "Rejected from master merge."
         if role == Qt.ItemDataRole.BackgroundRole:
-            return STATE_COLORS.get(row["state"], None)
+            return self._background_for_row(row)
         return None
+
+    def set_qa_highlight_row(self, row_id: str | None) -> None:
+        new_id = (row_id or "").lower() or None
+        old_id = self._qa_highlight_row_id
+        if old_id == new_id:
+            return
+        self._qa_highlight_row_id = new_id
+        if old_id:
+            self.refresh_row_by_id(old_id)
+        if new_id:
+            self.refresh_row_by_id(new_id)
 
     def set_query(self, q: QueryState) -> None:
         q.sort_by = self.q.sort_by
@@ -743,6 +753,15 @@ class StringsTableModel(QAbstractTableModel):
             if prev:
                 return self.repo.fetch_sql_page_after_id(self.q, self.page_size, prev[-1]["id"])
         return self.repo.fetch(self.q, self.page_size, page * self.page_size)
+
+    def _background_for_row(self, row: dict[str, str]) -> QColor | None:
+        base = STATE_COLORS.get(row["state"], None)
+        row_id = (row.get("id") or "").lower()
+        if self._qa_highlight_row_id and row_id == self._qa_highlight_row_id:
+            if base is not None:
+                return base.lighter(145)
+            return QColor("#7f6518")
+        return base
 
 
 def _where_without_state(q: QueryState) -> tuple[str, tuple]:

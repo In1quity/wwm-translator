@@ -9,6 +9,7 @@ from .render_preview import render_text_to_html
 
 PLACEHOLDER_RE = re.compile(r"\{[^{}]+\}")
 LINK_TAG_RE = re.compile(r"<[^<>|]+\|[^<>|]+\|[^<>|]+\|[^<>|]+>")
+FORBIDDEN_XML_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9_:-]*>")
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 ERROR_CODE_RUSSIAN_AFTER_HASH = "01"
@@ -18,6 +19,7 @@ ERROR_CODE_LINK_TAG_INVALID = "04"
 ERROR_CODE_UNBALANCED_BRACES = "05"
 ERROR_CODE_CLOSING_BRACE_WITHOUT_OPENING = "06"
 ERROR_CODE_OPENING_BRACE_WITHOUT_CLOSING = "07"
+ERROR_CODE_FORBIDDEN_XML_TAG = "08"
 
 
 def check_row(
@@ -31,6 +33,7 @@ def check_row(
     payload: list[tuple[str, str, str, str]] = []
     _check_placeholders(payload, row_id, cn, target)
     _check_tags(payload, row_id, cn, target)
+    _check_forbidden_xml_tags(payload, row_id, target)
     _check_lang(payload, row_id, en, target, target_lang)
     _check_glossary(payload, row_id, cn, en, target, glossary_rows)
     _check_render_tags(payload, row_id, target)
@@ -142,6 +145,15 @@ def _check_tags(
 ) -> None:
     if len(LINK_TAG_RE.findall(cn or "")) != len(LINK_TAG_RE.findall(target or "")):
         payload.append((row_id, "link_tag_count_mismatch", "error", ERROR_CODE_LINK_TAG_INVALID))
+
+
+def _check_forbidden_xml_tags(
+    payload: list[tuple[str, str, str, str]], row_id: str, target: str
+) -> None:
+    bad = FORBIDDEN_XML_TAG_RE.search(target or "")
+    if bad is None:
+        return
+    payload.append((row_id, "xml_tag_forbidden", "error", ERROR_CODE_FORBIDDEN_XML_TAG))
 
 
 def _check_lang(
