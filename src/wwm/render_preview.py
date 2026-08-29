@@ -10,6 +10,7 @@ COLOR_TAGS = {
 }
 _DOLLAR_VAR_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_:.+-")
 _DOLLAR_CONTROL_MARKERS = {"S", "E", "P", "N"}
+_DEFAULT_COLOR_TAG = "#F4D35E"
 
 
 def _is_hex_color_tag(text: str, pos: int) -> bool:
@@ -201,6 +202,14 @@ def render_text_to_html(text: str) -> tuple[str, list[str]]:
             if code in COLOR_TAGS:
                 color_stack.append(code)
                 out.append(f"<span style='color:{COLOR_TAGS[code]};font-weight:600'>")
+                i += 2
+                continue
+            if code.isalpha() and code.upper() != "E":
+                color_stack.append(code)
+                out.append(
+                    f"<span style='color:{COLOR_TAGS.get(code.upper(), _DEFAULT_COLOR_TAG)};"
+                    "font-weight:600'>"
+                )
                 i += 2
                 continue
             if code == "E":

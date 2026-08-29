@@ -94,3 +94,10 @@ def test_render_supports_h_color_tag() -> None:
     assert "color:#FF9F1C" in html
     assert "быстрый предмет" in html
     assert not warnings
+
+
+def test_render_supports_generic_single_letter_color_tag() -> None:
+    html, warnings = render_text_to_html("#Rважно#E")
+    assert "важно" in html
+    assert "font-weight:600" in html
+    assert "unknown tag #R" not in warnings

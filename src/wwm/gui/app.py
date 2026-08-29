@@ -86,7 +86,7 @@ class TagHighlighter(QSyntaxHighlighter):
         game_tag = QTextCharFormat()
         game_tag.setForeground(QColor("#F4D35E"))
         game_tag.setFontWeight(QFont.Weight.Bold)
-        self.rules.append((QRegularExpression(r"#(?:Y|G|D|H)[^#\n]{0,400}#E"), game_tag))
+        self.rules.append((QRegularExpression(r"#[A-DF-Za-df-z][^#\n]{0,400}#E"), game_tag))
         self.rules.append((QRegularExpression(r"#[0-9A-Fa-f]{6}[^#\n]{0,400}#E"), game_tag))
 
         placeholder = QTextCharFormat()
@@ -829,12 +829,13 @@ class MainWindow(QMainWindow):
             self.same_source_list.addItem(item)
             self._preview_row_ids[index] = preview_row_id
 
-    def _fill_row_qa_panel(self, row_id: str) -> None:
+    def _fill_row_qa_panel(self, row_id: str) -> int:
         self.qa_list.clear()
         self._qa_issue_row_ids.clear()
         for index, item in enumerate(fill_qa_panel(self.conn, row_id)):
             self.qa_list.addItem(item)
             self._qa_issue_row_ids[index] = row_id
+        return self.qa_list.count()
 
     def _show_qa_overview_panel(self) -> None:
         if self.conn is None:
@@ -916,8 +917,9 @@ class MainWindow(QMainWindow):
         if self.conn is None:
             return
         if self._has_row_selection() and self.current_id:
-            self._fill_row_qa_panel(self.current_id)
-            return
+            row_issues = self._fill_row_qa_panel(self.current_id)
+            if row_issues > 0:
+                return
         self._show_qa_overview_panel()
 
     def _approve_current_row(self) -> None:
@@ -1128,7 +1130,8 @@ class MainWindow(QMainWindow):
         )
         if self.current_id and self._has_row_selection():
             self._on_row()
-            return
+            if self.qa_list.count() > 0:
+                return
         self._show_qa_overview_panel()
 
     def _cleanup_qa_runner(self) -> None:
